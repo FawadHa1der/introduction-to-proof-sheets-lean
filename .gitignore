@@ -2,3 +2,8 @@
 !.vscode/extensions.json
 .lake
 .DS_Store
+# website build outputs and the forked library checkouts (each fork is its own git repo)
+/website/out/
+/website/forks/
+/website/site/node_modules/
+/website/site/dist/

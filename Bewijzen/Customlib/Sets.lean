@@ -349,21 +349,28 @@ elab_rules : term <= expected
     else
       elabTerm (← `(Membership.mem $s $x)) expected
 
+-- Since Mathlib v4.34 `⊆` and `⊂` have their own elaborators
+-- (`Mathlib.Tactic.SetNotationForOrder`): on `Set` and `Finset` they mean `≤` and `<`, and `Set`
+-- has no `HasSubset` instance any more. The two rules below therefore hand the (rewritten)
+-- relation to Mathlib's elaborator directly, which also keeps the `⊆`/`⊂` macros below from
+-- expanding again.
 elab_rules : term <= expected
   | `(subsetTypeAware% $a $b) => do
+    let elabRel := Mathlib.Meta.SetNotationForOrder.elabSubsetStx'
     match ← writtenAsType a, ← writtenAsType b with
-    | true,  true  => elabTerm (← `(HasSubset.Subset (Set.univ : Set $a) (Set.univ : Set $b))) expected
-    | true,  false => elabTerm (← `(HasSubset.Subset (Set.univ : Set $a) $b)) expected
-    | false, true  => elabTerm (← `(HasSubset.Subset $a (Set.univ : Set $b))) expected
-    | false, false => elabTerm (← `(HasSubset.Subset $a $b)) expected
+    | true,  true  => elabRel (← `((Set.univ : Set $a) ⊆ (Set.univ : Set $b))) expected
+    | true,  false => elabRel (← `((Set.univ : Set $a) ⊆ $b)) expected
+    | false, true  => elabRel (← `($a ⊆ (Set.univ : Set $b))) expected
+    | false, false => elabRel (← `($a ⊆ $b)) expected
 
 elab_rules : term <= expected
   | `(ssubsetTypeAware% $a $b) => do
+    let elabRel := Mathlib.Meta.SetNotationForOrder.elabSSubsetStx'
     match ← writtenAsType a, ← writtenAsType b with
-    | true,  true  => elabTerm (← `(HasSSubset.SSubset (Set.univ : Set $a) (Set.univ : Set $b))) expected
-    | true,  false => elabTerm (← `(HasSSubset.SSubset (Set.univ : Set $a) $b)) expected
-    | false, true  => elabTerm (← `(HasSSubset.SSubset $a (Set.univ : Set $b))) expected
-    | false, false => elabTerm (← `(HasSSubset.SSubset $a $b)) expected
+    | true,  true  => elabRel (← `((Set.univ : Set $a) ⊂ (Set.univ : Set $b))) expected
+    | true,  false => elabRel (← `((Set.univ : Set $a) ⊂ $b)) expected
+    | false, true  => elabRel (← `($a ⊂ (Set.univ : Set $b))) expected
+    | false, false => elabRel (← `($a ⊂ $b)) expected
 
 end TypesAsSets
 

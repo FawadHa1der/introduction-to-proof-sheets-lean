@@ -10,7 +10,7 @@
 import WaterproofGenre
 import Verbose.English.All
 import Bewijzen.Customlib.Integers
-import Bewijzen.L07_Weak_Induction.sheet1_weak_induction
+import Bewijzen.Customlib.WeakInduction
 
 open WaterproofGenre
 open Verbose.NameLess

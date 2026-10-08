@@ -8,6 +8,7 @@ import Bewijzen.Customlib.Rational
 import Bewijzen.Customlib.Reals
 import Bewijzen.Customlib.Sequences
 import Bewijzen.Customlib.Sets
+import Bewijzen.Customlib.WeakInduction
 import Bewijzen.L01_Propositional_Logic_1.sheet1_conjunction
 import Bewijzen.L01_Propositional_Logic_1.sheet2_disjunction
 import Bewijzen.L01_Propositional_Logic_1.sheet3_even_square
