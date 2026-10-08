@@ -1,0 +1,50 @@
+{
+  "schema": "proof-sheets.sources/v1",
+  "note": "Every input of the website build besides the course itself. Forks are an upstream commit plus the patch series in website/patches/<name>/ (git am); build.sh's sources lane clones and patches them into website/forks/<name> and refuses a checkout whose tree differs. Dependencies are unmodified upstream commits, cloned into website/out/src/<name>.",
+  "release": {
+    "id": "lean-v4.34.0-e1a79c1",
+    "digest": "sha256:bd71636b04dca47a1ecbb3c1d5beaca47576e4750cc51105543c346d5b5cebcd",
+    "runtime": "wasm64-f69cca24d0878a58",
+    "from": "https://github.com/FawadHa1der/lean4/releases/download/lean-v4.34.0-e1a79c1/",
+    "packs": ["lean-core", "lean-lib", "mathlib-essential", "mathlib-game-extra"]
+  },
+  "qed64": {
+    "repo": "https://github.com/FawadHa1der/QED64",
+    "commit": "8c461a869b03388c12d7ff68d83a4c621cfb728c",
+    "note": "the site's npm pin (website/site/package.json) and the bake/probe pipeline"
+  },
+  "forks": {
+    "verso": {
+      "upstream": "https://github.com/leanprover/verso.git",
+      "base": "cad4b633e75ea769b851f12f9ca3b4f0dfcc625f",
+      "baseNote": "tag v4.34.0",
+      "branch": "waterproof-v4.34.0",
+      "carries": "pimotte/verso error-option-fix-v4.31.0 (multilean, elabCommandsCore, ExplanationPlaceholder), ported"
+    },
+    "waterproof-genre": {
+      "upstream": "https://github.com/impermeable/waterproof-genre.git",
+      "base": "12ca11c9c0e5335d1cf8a2a540b90c127162134a",
+      "baseNote": "feature/smaller-genre",
+      "branch": "website-v4.34"
+    },
+    "verbose-lean4": {
+      "upstream": "https://github.com/impermeable/verbose-lean4.git",
+      "base": "692339b89c174fb25ae5f396234bee927e98c31f",
+      "baseNote": "feature/more-induction",
+      "branch": "website-v4.34"
+    },
+    "waterproof-vscode": {
+      "upstream": "https://github.com/impermeable/waterproof-vscode.git",
+      "base": "01f9105257d824a53257c27d52fdaae6b903db32",
+      "baseNote": "main; the Lean file format is vendored into website/site/src/lean-format (no patches)",
+      "branch": "website-qed64"
+    }
+  },
+  "deps": {
+    "subverso": { "url": "https://github.com/leanprover/subverso.git", "rev": "9b90b7f938d6169246325df002351014f49945ef" },
+    "md4lean": { "url": "https://github.com/acmepjz/md4lean.git", "rev": "31907cc18f48a95384f99cee5582c00fb39e0f67" },
+    "illuminate": { "url": "https://github.com/leanprover/illuminate.git", "rev": "a1a61c9678da010e958ed24cdfa6f635b85f172a" },
+    "lean4-cli": { "url": "https://github.com/leanprover/lean4-cli.git", "rev": "e92c9f15fdfacc8536f31cfb3b7ad26c3c8cd204" },
+    "mathlib4": { "url": "https://github.com/leanprover-community/mathlib4.git", "rev": "5ed2965256430c3649e86755f9576b54eca72435", "shallow": true }
+  }
+}

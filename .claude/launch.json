@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "proof-sheets-site",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "website/site", "run", "dev"],
+      "port": 5197
+    }
+  ]
+}

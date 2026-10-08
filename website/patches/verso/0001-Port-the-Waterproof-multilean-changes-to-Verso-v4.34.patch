@@ -1,0 +1,688 @@
+From 62281deb307731d382c45f145bae15ebc82af513 Mon Sep 17 00:00:00 2001
+From: fawad haider <153737+FawadHa1der@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 17:21:18 -0400
+Subject: [PATCH] Port the Waterproof multilean changes to Verso v4.34.0
+
+Forward-ports pimotte/verso error-option-fix-v4.31.0 (2c181ad, itself
+ejgallego's 89a89ec "add multilean directive" plus follow-ups) onto
+upstream v4.34.0 (cad4b63), as one change. The fork's commits did not
+cherry-pick: upstream 4.34 moved InlineLean to the module system and now
+parses a code block in place in the file (strLitInputContext) instead of
+a same-shape copy (parserInputString).
+
+- `:::multilean`: elaborates the Lean fences of the directive as one
+  command stream, with the other blocks as explanation placeholders.
+- `elabCommandsCore` now takes the parser input explicitly: the input
+  context, the start position and the file map. `elabCommands` passes
+  the file itself (upstream's behaviour); `multilean` passes its
+  synthetic same-shape source, starting at the first fence.
+- The `error` flag is `Option Bool` again (none: log as-is; some true:
+  errors expected; some false: errors not expected), with the fork's
+  isSilent handling in reportMessages.
+- EmbeddedSyntaxInfo and the semantic tokens of embedded Lean code
+  (Verso.Doc.Lsp), the multilean block extension and its styles.
+- Keeps upstream's batched highlighting (highlightMany) and its
+  `@[expose]` on optionDocs.Args (the fork's removal was for 4.31).
+
+Everything is `meta` where 4.34 requires it; InlineLean meta-imports
+InlineLean.Block for ExplanationPlaceholder's Quote instance. All 216
+modules of the WaterproofGenre closure compile with the toolchain
+release's native compiler (lean-v4.34.0-e1a79c1 native64).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/verso-manual/VersoManual/Html/Style.lean  |  61 ++++++
+ src/verso-manual/VersoManual/InlineLean.lean  | 188 ++++++++++++++++--
+ .../VersoManual/InlineLean/Block.lean         | 102 ++++++++++
+ src/verso/Verso/Doc/Elab/Basic.lean           |   8 +
+ src/verso/Verso/Doc/Lsp.lean                  |  87 +++++++-
+ 5 files changed, 416 insertions(+), 30 deletions(-)
+
+diff --git a/src/verso-manual/VersoManual/Html/Style.lean b/src/verso-manual/VersoManual/Html/Style.lean
+index eb2151a2..ddb0f34e 100644
+--- a/src/verso-manual/VersoManual/Html/Style.lean
++++ b/src/verso-manual/VersoManual/Html/Style.lean
+@@ -958,6 +958,67 @@ main section li ol {
+     margin-left: 0.75em;
+ }
+ 
++.multilean {
++    margin: 1.5rem 0;
++}
++
++.multilean > .multilean-segment:first-child > .hl.lean.block {
++    margin-top: 0;
++}
++
++.multilean > .multilean-segment:last-child > .hl.lean.block {
++    margin-bottom: 0;
++}
++
++.multilean-explanation {
++    position: relative;
++    margin: 0.9rem 0 0.9rem 2rem;
++    padding-left: 1.2rem;
++}
++
++.multilean-explanation::before {
++    content: "";
++    position: absolute;
++    left: 0;
++    top: 0.15rem;
++    bottom: 0.15rem;
++    width: 0.2rem;
++    border-radius: 999px;
++    background: color-mix(in srgb, var(--verso-info-indicator-color) 72%, white);
++}
++
++.multilean-explanation-inner {
++    position: relative;
++    padding: 0.8rem 1rem 0.85rem;
++    border: 1px solid color-mix(in srgb, var(--verso-info-indicator-color) 24%, white);
++    border-radius: 0.9rem;
++    background:
++      linear-gradient(180deg,
++        color-mix(in srgb, var(--verso-selected-color) 45%, white),
++        color-mix(in srgb, var(--verso-toc-background-color) 60%, white));
++    box-shadow: 0 0.35rem 1.2rem color-mix(in srgb, var(--verso-selected-color) 35%, transparent);
++}
++
++.multilean-explanation-inner::before {
++    content: "Explanation";
++    display: inline-block;
++    margin-bottom: 0.45rem;
++    font-family: var(--verso-structure-font-family);
++    font-size: 0.78rem;
++    font-weight: 700;
++    letter-spacing: 0.04em;
++    text-transform: uppercase;
++    color: color-mix(in srgb, var(--verso-info-indicator-color) 78%, black);
++}
++
++.multilean-explanation-inner > :first-child {
++    margin-top: 0;
++}
++
++.multilean-explanation-inner > :last-child {
++    margin-bottom: 0;
++}
++
+ .lean-output {
+     overflow-x: auto;
+     margin: 0px;
+diff --git a/src/verso-manual/VersoManual/InlineLean.lean b/src/verso-manual/VersoManual/InlineLean.lean
+index a93054b3..0db69c8b 100644
+--- a/src/verso-manual/VersoManual/InlineLean.lean
++++ b/src/verso-manual/VersoManual/InlineLean.lean
+@@ -19,6 +19,7 @@ public import Verso
+ public import VersoManual.Basic
+ public import VersoManual.HighlightedCode
+ public import VersoManual.InlineLean.Block
++public meta import VersoManual.InlineLean.Block
+ public import VersoManual.InlineLean.IO
+ public import VersoManual.InlineLean.LongLines
+ public meta import VersoManual.InlineLean.LongLines
+@@ -35,7 +36,7 @@ open Verso ArgParse Doc Elab Genre.Manual Html Code Highlighted.WebAssets Expect
+ open Lean Elab
+ open SubVerso.Highlighting
+ 
+-open Verso.SyntaxUtils (runParserCategory' SyntaxError parseStrLitAsCategory strLitInputContext)
++open Verso.SyntaxUtils (runParserCategory' SyntaxError parseStrLitAsCategory strLitInputContext parserInputString)
+ 
+ open Lean.Doc.Syntax
+ open Lean.Elab.Tactic.GuardMsgs
+@@ -88,11 +89,11 @@ structure LeanBlockConfig where
+   «show» : Bool
+   keep : Bool
+   name : Option Name
+-  error : Bool
++  error : Option Bool
+   fresh : Bool
+ 
+ meta def LeanBlockConfig.parse : ArgParse m LeanBlockConfig :=
+-  LeanBlockConfig.mk <$> .flag `show true <*> .flag `keep true <*> .named `name .name true <*> .flag `error false <*> .flag `fresh false
++  LeanBlockConfig.mk <$> .flag `show true <*> .flag `keep true <*> .named `name .name true <*> .named `error .bool true <*> .flag `fresh false
+ 
+ meta instance : FromArgs LeanBlockConfig m := ⟨LeanBlockConfig.parse⟩
+ 
+@@ -161,7 +162,7 @@ meta def reportMessages {m} [Monad m] [MonadLog m] [MonadError m]
+   | none =>
+     for msg in messages.toArray do
+       logMessage {msg with
+-        isSilent := msg.isSilent || msg.severity != .error
++        isSilent := msg.isSilent && msg.severity != .error
+       }
+   | some true =>
+     if messages.hasErrors then
+@@ -225,6 +226,67 @@ private meta def toHighlightedLeanInline (shouldShow : Bool) (hls : Highlighted)
+ 
+   ``(Inline.other (Verso.Genre.Manual.InlineLean.Inline.lean $(← quoteHighlightViaSerialization hls)) #[Inline.code $(quote str.getString)])
+ 
++private meta def explanationMarker (idx : Nat) : String :=
++  s!"--{idx}"
++
++private meta def utf8Size (str : String) : Nat :=
++  str.foldl (init := 0) fun acc c => acc + c.utf8Size
++
++private meta def blankOfSameShape (str : String) : String := Id.run do
++  let mut out := ""
++  for c in str do
++    if c == '\n' then
++      out := out.push '\n'
++    else
++      for _ in [0:c.utf8Size] do
++        out := out.push ' '
++  out
++
++private meta def lineCommentOfWidth (width : Nat) (marker : String) : String :=
++  if width = 0 then ""
++  else
++    let marker := marker.take width |>.toString
++    marker ++ String.ofList (List.replicate (width - marker.length) ' ')
++
++private meta def explanationPlaceholderSource (idx : Nat) (source : String) :
++    ExplanationPlaceholder × String :=
++  let marker := explanationMarker idx
++  let lines := source.splitOn "\n" |>.toArray
++  let rendered :=
++    lines.mapIdx fun lineIdx line =>
++      let width := utf8Size line
++      if lineIdx = 0 then
++        lineCommentOfWidth width marker
++      else if width >= 2 then
++        lineCommentOfWidth width "--"
++      else
++        String.ofList (List.replicate width ' ')
++  let placeholder := Id.run do
++    let mut placeholder := ""
++    for i in [0:rendered.size] do
++      let line := rendered[i]!
++      placeholder :=
++        if i = 0 then line
++        else placeholder ++ "\n" ++ line
++    placeholder
++  ({ marker, lineCount := rendered.size }, placeholder)
++
++private meta def toHighlightedMultileanBlock
++    (placeholders : Array ExplanationPlaceholder)
++    (content : Array Term)
++    (shouldShow : Bool) (hls : Highlighted) : DocElabM Term := do
++  if !shouldShow then
++    return ← ``(Block.concat #[])
++
++  let range := (← getRef).getRange? |>.map (← getFileMap).utf8RangeToLspRange
++  ``(Block.other
++      (Block.multilean
++        $(← quoteHighlightViaSerialization hls)
++        $(quote placeholders)
++        (some $(quote (← getFileName)))
++        $(quote range))
++      #[$content,*])
++
+ 
+ /--
+ Sets `linter.unusedVariables` to `false` in all `CommandContextInfo.options` within an info tree.
+@@ -246,18 +308,31 @@ private meta partial def disableUnusedVarLinterInInfoTree : InfoTree → InfoTre
+     .node info (children.map disableUnusedVarLinterInInfoTree)
+   | .hole id => .hole id
+ 
+-meta def elabCommands (config : LeanBlockConfig) (str : StrLit)
+-    (toHighlightedLeanContent : (shouldShow : Bool) → (hls : Highlighted) → (str: StrLit) → DocElabM Term)
++private meta def saveEmbeddedSyntaxRoots [Monad m] [MonadInfoTree m]
++    (blame : Syntax) (roots : Array Syntax) : m Unit := do
++  unless roots.isEmpty do
++    pushInfoLeaf <| .ofCustomInfo { stx := blame, value := Dynamic.mk <| Verso.Doc.Elab.EmbeddedSyntaxInfo.mk roots }
++
++/--
++Elaborates the Lean commands that `ictx` holds from `startPos` on, as `elabCommands` does for one
++code block. `fileMap` is the map positions in `ictx` resolve against, `blame` is where the
++block-level messages go and `summary` names the block in the outline.
++
++`elabCommands` passes the file itself (upstream parses a code block in place); `multilean` passes a
++synthetic source of the same shape that holds only its Lean fences.
++-/
++meta def elabCommandsCore (config : LeanBlockConfig) (ictx : Parser.InputContext)
++    (startPos : String.Pos.Raw) (fileMap : FileMap) (blame : Syntax)
++    (summary : String)
++    (toHighlightedLeanContent : (shouldShow : Bool) → (hls : Highlighted) → DocElabM Term)
+     (minCommands : Option Nat := none)
+     (maxCommands : Option Nat := none) :
+     DocElabM Term :=
+   withoutAsync <| do
+-    PointOfInterest.save (← getRef) ((config.name.map (·.toString)).getD (abbrevFirstLine 20 str.getString))
++    PointOfInterest.save (← getRef) ((config.name.map (·.toString)).getD (abbrevFirstLine 20 summary))
+       (kind := Lsp.SymbolKind.file)
+       (detail? := some ("Lean code" ++ config.outlineMeta))
+ 
+-    let col? := (← getRef).getPos? |>.map (← getFileMap).utf8PosToLspPos |>.map (·.character)
+-
+     let origScopes ← if config.fresh then pure [{header := ""}] else getScopes
+ 
+     -- Turn off async elaboration so that info trees and messages are available when highlighting syntax.
+@@ -268,9 +343,7 @@ meta def elabCommands (config : LeanBlockConfig) (str : StrLit)
+       let opts := pp.tagAppFns.set opts true
+       { sc with opts, isPublic := true }
+ 
+-    let text ← getFileMap
+-    let (ictx, startPos) ← SyntaxUtils.strLitInputContext str.raw (← getFileName)
+-    let cctx : Command.Context := { fileName := ← getFileName, fileMap := text, snap? := none, cancelTk? := none}
++    let cctx : Command.Context := { fileName := ← getFileName, fileMap, snap? := none, cancelTk? := none}
+ 
+     let mut cmdState : Command.State := { env := ← getEnv, maxRecDepth := ← MonadRecDepth.getMaxRecDepth, scopes := origScopes }
+     let mut pstate := { pos := startPos, recovering := false, hasLeading := false }
+@@ -325,6 +398,7 @@ meta def elabCommands (config : LeanBlockConfig) (str : StrLit)
+       -- re-running it.
+       for t in cmdState.infoState.trees do
+         pushInfoTree (disableUnusedVarLinterInInfoTree t)
++      saveEmbeddedSyntaxRoots blame nonTerm
+ 
+ 
+       let nonSilentMsgs := cmdState.messages.toArray.filter (!·.isSilent)
+@@ -333,7 +407,7 @@ meta def elabCommands (config : LeanBlockConfig) (str : StrLit)
+         (includeUnparsed := true) (startPos? := some startPos)
+       let hls := hlArr.foldl (· ++ ·) Highlighted.empty
+ 
+-      toHighlightedLeanContent config.show hls str
++      toHighlightedLeanContent config.show hls
+     finally
+       if !config.keep then
+         setEnv origEnv
+@@ -347,10 +421,7 @@ meta def elabCommands (config : LeanBlockConfig) (str : StrLit)
+ 
+         saveOutputs name msgs
+ 
+-      reportMessages config.error str cmdState.messages
+-
+-      if config.show then
+-        warnLongLines col? str
++      reportMessages config.error blame cmdState.messages
+ where
+   runCommand (act : Command.CommandElabM Unit) (stx : Syntax)
+       (cctx : Command.Context) (cmdState : Command.State) :
+@@ -370,6 +441,21 @@ where
+     | .error _ => pure cmdState
+     | .ok ((), cmdState) => pure cmdState
+ 
++meta def elabCommands (config : LeanBlockConfig) (str : StrLit)
++    (toHighlightedLeanContent : (shouldShow : Bool) → (hls : Highlighted) → (str: StrLit) → DocElabM Term)
++    (minCommands : Option Nat := none)
++    (maxCommands : Option Nat := none) :
++    DocElabM Term := do
++  let col? := (← getRef).getPos? |>.map (← getFileMap).utf8PosToLspPos |>.map (·.character)
++  let (ictx, startPos) ← SyntaxUtils.strLitInputContext str.raw (← getFileName)
++  let result ← elabCommandsCore config ictx startPos (← getFileMap) str str.getString
++    (fun shouldShow hls => toHighlightedLeanContent shouldShow hls str)
++    (minCommands := minCommands)
++    (maxCommands := maxCommands)
++  if config.show then
++    warnLongLines col? str
++  pure result
++
+ /--
+ Elaborates the provided Lean command in the context of the current Verso module.
+ -/
+@@ -385,6 +471,70 @@ meta def leanCommand : RoleExpanderOf LeanBlockConfig
+     else
+       `(sorry)
+ 
++/--
++Interleave Lean code blocks with explanatory Verso prose while elaborating the Lean fragments as one
++combined command stream.
++
++Each ````lean` fence inside `:::multilean` contributes to a single synthetic Lean source file. The
++non-Lean blocks are preserved as explanation placeholders and reinserted between the highlighted
++code segments in the rendered output.
++
++Current limitation: the explanatory prose is still elaborated as ordinary Verso content, so local
++Lean bindings introduced by earlier proof steps are not yet available for scoped references inside
++the explanation blocks.
++-/
++@[directive]
++meta def multilean : DirectiveExpanderOf LeanBlockConfig
++  | config, blocks => do
++    let sourceText := (← getFileMap).source
++    let mut source := ""
++    let mut lastPos : String.Pos.Raw := 0
++    let mut placeholders : Array ExplanationPlaceholder := #[]
++    let mut explanationBlocks : Array Term := #[]
++    let mut leanBodies : Array StrLit := #[]
++    for block in blocks do
++      match block with
++      | `(block|``` $nameStx:ident $argsStx* | $contents:str ```) =>
++        if nameStx.getId == `lean then
++          let start := contents.raw.getPos?.getD lastPos
++          source := source ++ blankOfSameShape (lastPos.extract sourceText start)
++          let stop := contents.raw.getTailPos?.getD start
++          if argsStx.size != 0 then
++            throwErrorAt nameStx "Lean blocks inside `:::multilean` do not support per-block arguments"
++          source := source ++ (start.extract sourceText stop)
++          leanBodies := leanBodies.push contents
++          lastPos := stop
++        else
++          let start := block.raw.getPos?.getD lastPos
++          source := source ++ blankOfSameShape (lastPos.extract sourceText start)
++          let stop := block.raw.getTrailingTailPos?.getD start
++          let (placeholder, masked) := explanationPlaceholderSource placeholders.size (start.extract sourceText stop)
++          source := source ++ masked
++          placeholders := placeholders.push placeholder
++          explanationBlocks := explanationBlocks.push (← elabBlock block)
++          lastPos := stop
++      | other =>
++        let start := other.raw.getPos?.getD lastPos
++        source := source ++ blankOfSameShape (lastPos.extract sourceText start)
++        let stop := other.raw.getTrailingTailPos?.getD start
++        let (placeholder, masked) := explanationPlaceholderSource placeholders.size (start.extract sourceText stop)
++        source := source ++ masked
++        placeholders := placeholders.push placeholder
++        explanationBlocks := explanationBlocks.push (← elabBlock other)
++        lastPos := stop
++    if leanBodies.isEmpty then
++      throwErrorAt (← getRef) "`:::multilean` requires at least one ```lean``` block"
++    for body in leanBodies do
++      if config.show then
++        let col? := body.raw.getPos? |>.map (← getFileMap).utf8PosToLspPos |>.map (·.character)
++        warnLongLines col? body
++    -- The synthetic source keeps every byte position of the file up to the last fence, so the
++    -- commands' positions are the file's; parsing and highlighting start at the first fence.
++    let startPos := leanBodies[0]!.raw.getPos?.getD 0
++    let ictx := Parser.mkInputContext source (← getFileName)
++    elabCommandsCore config ictx startPos (FileMap.ofString source) (← getRef) source
++      (toHighlightedMultileanBlock placeholders explanationBlocks)
++
+ 
+ /--
+ Elaborates the provided Lean term in the context of the current Verso module.
+@@ -444,7 +594,7 @@ meta def leanTerm : CodeBlockExpanderOf LeanInlineConfig
+ 
+     pushInfoTree (disableUnusedVarLinterInInfoTree tree)
+ 
+-    if config.error then
++    if config.error.getD false then
+       if newMsgs.hasErrors then
+         for msg in newMsgs.errorsToWarnings.toArray do
+           logMessage msg
+@@ -529,7 +679,7 @@ meta def leanInline : RoleExpanderOf LeanInlineConfig
+       Hover.addCustomHover (mkNullNode #[s, e]) type
+       Hover.addCustomHover f type
+ 
+-    if config.error then
++    if config.error.getD false then
+       if newMsgs.hasErrors then
+         for msg in newMsgs.errorsToWarnings.toArray do
+           logMessage {msg with isSilent := true}
+diff --git a/src/verso-manual/VersoManual/InlineLean/Block.lean b/src/verso-manual/VersoManual/InlineLean/Block.lean
+index 2578c5a3..4d34e00b 100644
+--- a/src/verso-manual/VersoManual/InlineLean/Block.lean
++++ b/src/verso-manual/VersoManual/InlineLean/Block.lean
+@@ -23,6 +23,41 @@ open SubVerso.Highlighting
+ 
+ namespace Verso.Genre.Manual.InlineLean
+ 
++public structure ExplanationPlaceholder where
++  marker : String
++  lineCount : Nat
++deriving ToJson, FromJson, Repr, Quote, Inhabited
++
++public structure MultiLeanData where
++  code : Highlighted
++  placeholders : Array ExplanationPlaceholder
++  file : Option System.FilePath := none
++  range : Option Lsp.Range := none
++deriving ToJson, FromJson, Repr, Quote
++
++public def splitMultileanCode (hls : Highlighted) (placeholders : Array ExplanationPlaceholder) :
++    Array (Highlighted ⊕ Nat) := Id.run do
++  let lines := hls.lines
++  let mut out := #[]
++  let mut current := Highlighted.empty
++  let mut lineIdx := 0
++  while h : lineIdx < lines.size do
++    let line := lines[lineIdx]
++    let marker? := placeholders.findIdx? fun ph => line.toString.trimAscii == ph.marker
++    match marker? with
++    | some idx =>
++      if !current.isEmpty then
++        out := out.push (.inl current)
++        current := .empty
++      out := out.push (.inr idx)
++      lineIdx := lineIdx + placeholders[idx]!.lineCount
++    | none =>
++      current := current ++ line
++      lineIdx := lineIdx + 1
++  if !current.isEmpty then
++    out := out.push (.inl current)
++  out
++
+ block_extension Block.lean
+     (hls : Highlighted) (file : Option System.FilePath := none) (range : Option Lsp.Range := none)
+     via withHighlighting where
+@@ -63,3 +98,70 @@ block_extension Block.lean
+       | .ok (hl : Highlighted) =>
+ 
+         hl.blockHtml (g := Manual) "examples"
++
++block_extension Block.multilean
++    (hls : Highlighted) (placeholders : Array ExplanationPlaceholder)
++    (file : Option System.FilePath := none) (range : Option Lsp.Range := none)
++    via withHighlighting where
++  init s := s.addQuickJumpMapper exampleDomain exampleDomainMapper
++  data := ToJson.toJson <| MultiLeanData.mk hls placeholders file range
++
++  traverse id data _ := do
++    match FromJson.fromJson? data with
++    | .error err =>
++      reportError <| "Couldn't deserialize multilean block while traversing example: " ++ err
++      pure none
++    | .ok (info : MultiLeanData) =>
++      let defs := definedNames info.code
++      saveExampleDefs id defs
++      pure none
++  toTeX :=
++    some <| fun _ go _ data content => do
++      match FromJson.fromJson? data with
++      | .error err =>
++        reportError <| "Couldn't deserialize multilean block while rendering TeX: " ++ err
++        pure .empty
++      | .ok (info : MultiLeanData) =>
++        let pieces := splitMultileanCode info.code info.placeholders
++        let renderedBlocks ← content.mapM go
++        let mut out := TeX.empty
++        for piece in pieces do
++          match piece with
++          | .inl code =>
++            let code := code.trimOneLeadingNl.trimOneTrailingNl
++            if !code.isEmpty then
++              out := out ++ (← code.toTeX (g := Manual) (m := ReaderT ExtensionImpls (BuildLogT IO)))
++          | .inr idx =>
++            if h : idx < renderedBlocks.size then
++              out := out ++ renderedBlocks[idx]
++            else
++              reportError s!"Missing multilean explanation block {idx}"
++        pure out
++  toHtml :=
++    open Verso.Output.Html in
++    some <| fun _ go _ data content => do
++      match FromJson.fromJson? data with
++      | .error err =>
++        reportError <| "Couldn't deserialize multilean block while rendering HTML: " ++ err
++        pure .empty
++      | .ok (info : MultiLeanData) =>
++        let pieces := splitMultileanCode info.code info.placeholders
++        let renderedBlocks ← content.mapM go
++        let mut out : Array Html := #[]
++        for piece in pieces do
++          match piece with
++          | .inl code =>
++            let code := code.trimOneLeadingNl.trimOneTrailingNl
++            if !code.isEmpty then
++              let rendered ← code.blockHtml (g := Manual) "examples" (trim := false)
++              out := out.push {{<div class="multilean-segment multilean-code">{{rendered}}</div>}}
++          | .inr idx =>
++            if h : idx < renderedBlocks.size then
++              out := out.push {{
++                <div class="multilean-segment multilean-explanation">
++                  <div class="multilean-explanation-inner">{{renderedBlocks[idx]}}</div>
++                </div>
++              }}
++            else
++              reportError s!"Missing multilean explanation block {idx}"
++        pure {{<div class="multilean">{{out}}</div>}}
+diff --git a/src/verso/Verso/Doc/Elab/Basic.lean b/src/verso/Verso/Doc/Elab/Basic.lean
+index 1816f7f7..91261c1a 100644
+--- a/src/verso/Verso/Doc/Elab/Basic.lean
++++ b/src/verso/Verso/Doc/Elab/Basic.lean
+@@ -186,3 +186,11 @@ public structure DocListInfo where
+   bullets : Array Syntax
+   items : Array Syntax
+ deriving Repr, TypeName
++
++/--
++Custom info tree data to save embedded Lean syntax roots so LSP consumers can reuse Lean's own
++syntax-based analyses on inline/block examples.
++-/
++public structure EmbeddedSyntaxInfo where
++  roots : Array Syntax
++deriving Repr, TypeName
+diff --git a/src/verso/Verso/Doc/Lsp.lean b/src/verso/Verso/Doc/Lsp.lean
+index 42ed13da..a2dad65e 100644
+--- a/src/verso/Verso/Doc/Lsp.lean
++++ b/src/verso/Verso/Doc/Lsp.lean
+@@ -21,7 +21,7 @@ public meta import Verso.Doc.Name
+ 
+ namespace Verso.Lsp
+ 
+-open Verso.Doc.Elab (DocListInfo DocRefInfo TOC)
++open Verso.Doc.Elab (DocListInfo DocRefInfo TOC EmbeddedSyntaxInfo)
+ open Verso.Doc (PointOfInterest)
+ open Verso.Hover
+ open Lean.Doc.Syntax
+@@ -400,6 +400,20 @@ deriving Inhabited, Repr
+ protected meta def SemanticTokenEntry.ordLt (a b : SemanticTokenEntry) : Bool :=
+   a.line < b.line ∨ (a.line = b.line ∧ a.startChar < b.startChar)
+ 
++private meta def sameSemanticTokenEntry (a b : SemanticTokenEntry) : Bool :=
++  a.line == b.line &&
++    a.startChar == b.startChar &&
++    a.length == b.length &&
++    a.type == b.type &&
++    a.modifierMask == b.modifierMask
++
++private meta def dedupSortedTokenEntries (entries : Array SemanticTokenEntry) : Array SemanticTokenEntry := Id.run do
++  let mut out := #[]
++  for entry in entries do
++    if ! (out.back?.any (sameSemanticTokenEntry entry)) then
++      out := out.push entry
++  out
++
+ meta def encodeTokenEntries (entries : Array SemanticTokenEntry) : Array Nat := Id.run do
+   let mut data := #[]
+   let mut lastLine := 0
+@@ -561,17 +575,68 @@ where
+       }]
+     else #[]
+ 
+-meta def mergeTokens (mine : Array SemanticTokenEntry) (leans : SemanticTokens) : Array Nat:=
++private meta def absoluteToEntry
++    (tok : Lean.Server.FileWorker.AbsoluteLspSemanticToken) : Option SemanticTokenEntry := do
++  guard <| tok.pos.line == tok.tailPos.line
++  some {
++    line := tok.pos.line
++    startChar := tok.pos.character
++    length := tok.tailPos.character - tok.pos.character
++    type := tok.type.toNat
++    modifierMask := 0
++  }
++
++private meta def embeddedSyntaxTokens
++    (beginPos : String.Pos.Raw) (text : FileMap) (snap : Lean.Server.Snapshots.Snapshot) : Array SemanticTokenEntry := Id.run do
++  let roots : Array Syntax := snap.infoTree.foldInfo (init := #[]) fun _ info roots =>
++    match info with
++    | .ofCustomInfo ⟨_, data⟩ =>
++      match data.get? EmbeddedSyntaxInfo with
++      | some info => roots ++ info.roots
++      | none => roots
++    | _ => roots
++  if Array.isEmpty roots then
++    return #[]
++  /-
++  Upstream API follow-up:
++  1. Expose a public helper for collecting syntax-based semantic tokens from arbitrary syntax roots.
++  2. Expose a public helper for converting those tokens to absolute LSP tokens, including overlap handling.
++  3. Prefer a stable module boundary outside `Lean.Server.FileWorker`, or a single wrapper from roots to
++     `SemanticTokens`, so document tools like Verso can reuse Lean's token classification directly.
++  -/
++  let tokens := Array.flatMap (f := Lean.Server.FileWorker.collectSyntaxBasedSemanticTokens text) roots
++  let absolute := Lean.Server.FileWorker.computeAbsoluteLspSemanticTokens text beginPos none tokens
++  let absolute := Lean.Server.FileWorker.handleOverlappingSemanticTokens absolute
++  absolute.filterMap absoluteToEntry
++
++meta def mergeTokens (mine : Array SemanticTokenEntry) (leans : SemanticTokens) : Array Nat :=
+   let toks := decodeLeanTokens leans.data
+-  encodeTokenEntries (toks ++ mine |>.qsort (·.ordLt ·))
++  let merged := dedupSortedTokenEntries <| (toks ++ mine).qsort (·.ordLt ·)
++  encodeTokenEntries merged
++
++private meta def filterTokenEntries
++    (beginPos : Lsp.Position) (endPos? : Option Lsp.Position)
++    (entries : Array SemanticTokenEntry) : Array SemanticTokenEntry :=
++  entries.filter fun entry =>
++    let pos : Lsp.Position := ⟨entry.line, entry.startChar⟩
++    beginPos <= pos && endPos?.all (pos < ·)
+ 
+ open Lean Server Lsp RequestM in
+-meta def snapshotTokens (beginPos : String.Pos.Raw) (text : FileMap) (snap : Snapshots.Snapshot) : Array SemanticTokenEntry :=
+-  if snap.endPos <= beginPos then #[] else versoTokens text snap.stx
++meta def snapshotTokens
++    (beginPos : String.Pos.Raw) (endPos? : Option String.Pos.Raw)
++    (text : FileMap) (snap : Snapshots.Snapshot) : Array SemanticTokenEntry :=
++  if snap.endPos <= beginPos then
++    #[]
++  else
++    let beginLspPos := text.utf8PosToLspPos beginPos
++    let endLspPos? := endPos?.map text.utf8PosToLspPos
++    filterTokenEntries beginLspPos endLspPos? <| versoTokens text snap.stx ++ embeddedSyntaxTokens beginPos text snap
+ 
+ open Lean Server Lsp RequestM in
+-meta def snapshotsTokens (beginPos : String.Pos.Raw) (text : FileMap) (snaps : List Snapshots.Snapshot) : Array SemanticTokenEntry :=
+-  snaps.foldl (init := #[]) fun toks snap => toks ++ snapshotTokens beginPos text snap
++meta def snapshotsTokens
++    (beginPos : String.Pos.Raw) (endPos? : Option String.Pos.Raw)
++    (text : FileMap) (snaps : List Snapshots.Snapshot) : Array SemanticTokenEntry :=
++  snaps.foldl (init := #[]) fun toks snap => toks ++ snapshotTokens beginPos endPos? text snap
+ 
+ open Lean Server Lsp IO in
+ partial def getFinishedPrefixWithTimeout' (xs : AsyncList ε α) (timeoutMs : UInt32)
+@@ -659,13 +724,13 @@ meta partial def handleTokens (prev : RequestTask SemanticTokens)
+   if let some endPos := endPos? then
+     let t := doc.cmdSnaps.waitUntil (·.endPos >= endPos)
+     let toks : RequestTask (Array SemanticTokenEntry) :=
+-      t.mapCostly fun (snaps, _) => pure <| snapshotsTokens beginPos text snaps
++      t.mapCostly fun (snaps, _) => pure <| snapshotsTokens beginPos endPos? text snaps
+     let response ← mergeIntoPrev toks
+     return response.mapCheap fun t =>
+       t.map ({ response := ·, isComplete := true })
+   else
+     let (snaps, _, isComplete) ← doc.cmdSnaps.getFinishedPrefixWithTimeout 2000 (cancelTks := ctx.cancelTk.cancellationTasks)
+-    let toks : Array SemanticTokenEntry := snapshotsTokens beginPos text snaps
++    let toks : Array SemanticTokenEntry := snapshotsTokens beginPos endPos? text snaps
+     let response ← mergeIntoPrev (.pure toks)
+     pure <| response.mapCheap fun t => t.map ({ response := ·, isComplete := isComplete })
+ 
+@@ -673,7 +738,7 @@ where
+   mergeIntoPrev (toks : RequestTask (Array SemanticTokenEntry)) :=
+     mergeResponses toks prev fun
+       | none, none => SemanticTokens.mk none #[]
+-      | some xs, none => SemanticTokens.mk none <| encodeTokenEntries <| xs.qsort (·.ordLt ·)
++      | some xs, none => SemanticTokens.mk none <| encodeTokenEntries <| dedupSortedTokenEntries <| xs.qsort (·.ordLt ·)
+       | none, some r => r
+       | some mine, some leans => {leans with data := mergeTokens mine leans}
+ 
+@@ -701,7 +766,7 @@ meta def handleTokensFullStateful
+   let text := doc.meta.text
+   let (snaps, _, isComplete) ← doc.cmdSnaps.getFinishedPrefixWithTimeout 2000
+   RequestM.checkCancelled
+-  let toks : Array SemanticTokenEntry := snapshotsTokens 0 text snaps
++  let toks : Array SemanticTokenEntry := snapshotsTokens 0 none text snaps
+   RequestM.checkCancelled
+   let response := {prev with data := mergeTokens toks prev.response}
+   RequestM.checkCancelled

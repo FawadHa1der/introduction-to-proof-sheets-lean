@@ -1,0 +1,146 @@
+/* The page around the Waterproof editor and the Lean InfoView. The editor's own colours come
+   from waterproof-defaults.css (--wp-*); the InfoView reads VS Code's theme variables, which
+   are mapped below. */
+:root {
+  --bar-bg: #2b3990;
+  --bar-fg: #ffffff;
+  --page-bg: #f6f7fb;
+  --pane-bg: #ffffff;
+  --border: #d5d8e6;
+  --muted: #5d6178;
+  --ok: #1f8a4c;
+  --busy: #b07c10;
+  --bad: #b3261e;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  --mono: "JuliaMono", "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
+
+  /* VS Code theme variables the InfoView uses */
+  --vscode-font-family: var(--font);
+  --vscode-font-size: 13px;
+  --vscode-font-weight: normal;
+  --vscode-editor-font-family: var(--mono);
+  --vscode-editor-font-size: 13px;
+  --vscode-editor-font-weight: normal;
+  --vscode-editor-line-height: 1.45;
+  --vscode-editor-foreground: #1d1f2c;
+  --vscode-foreground: #1d1f2c;
+  --vscode-editor-background: var(--pane-bg);
+  --vscode-editor-selectionBackground: rgba(172, 176, 208, 0.48);
+  --vscode-editor-findMatchBackground: rgba(234, 92, 0, 0.33);
+  --vscode-editorHoverWidget-background: #f3f3f3;
+  --vscode-editorHoverWidget-foreground: #1d1f2c;
+  --vscode-editorHoverWidget-border: #c8c8c8;
+  --vscode-textCodeBlock-background: #eef0f7;
+  --vscode-textLink-foreground: #2b3990;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.16);
+  --vscode-dropdown-background: #ffffff;
+  --vscode-dropdown-foreground: #1d1f2c;
+  --vscode-dropdown-border: #cecece;
+  --vscode-diffEditor-insertedTextBackground: rgba(156, 204, 44, 0.25);
+  --vscode-diffEditor-removedTextBackground: rgba(255, 0, 0, 0.2);
+  --vscode-editorOverviewRuler-rangeHighlightForeground: rgba(0, 122, 204, 0.6);
+  --vscode-errorForeground: #b3261e;
+  --vscode-editorError-foreground: #e51400;
+  --vscode-editorWarning-foreground: #bf8803;
+  --vscode-editorInfo-foreground: #1a85ff;
+  --vscode-button-background: #2b3990;
+  --vscode-button-foreground: #ffffff;
+  --vscode-input-background: #ffffff;
+  --vscode-input-foreground: #1d1f2c;
+  --vscode-panel-border: var(--border);
+  --vscode-sideBarSectionHeader-background: #eceeff;
+  --vscode-lean4-infoView\.hypothesisName: #2b3990;
+  --vscode-lean4-infoView\.goalCaseName: #5d6178;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--page-bg);
+  color: var(--vscode-foreground);
+  font: 14px/1.4 var(--font);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* --- top bar --------------------------------------------------------------------------- */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--bar-bg);
+  color: var(--bar-fg);
+  flex: 0 0 auto;
+}
+.brand { color: inherit; text-decoration: none; font-weight: 600; white-space: nowrap; }
+.brand-sub { font-weight: 400; opacity: 0.8; margin-left: 4px; }
+.sheet-nav { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; }
+.sheet-nav select {
+  flex: 0 1 520px; min-width: 0; padding: 4px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.4);
+  background: rgba(255,255,255,0.12); color: inherit; font: inherit;
+}
+.sheet-nav select option, .sheet-nav select optgroup { color: #1d1f2c; background: #fff; }
+button.icon {
+  background: transparent; border: 1px solid rgba(255,255,255,0.4); color: inherit; border-radius: 4px;
+  width: 28px; height: 28px; font-size: 18px; line-height: 1; cursor: pointer;
+}
+button.icon:disabled { opacity: 0.35; cursor: default; }
+.pill {
+  white-space: nowrap; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.35);
+}
+.pill.ok { background: var(--ok); border-color: var(--ok); }
+.pill.busy { background: var(--busy); border-color: var(--busy); }
+.pill.bad { background: var(--bad); border-color: var(--bad); }
+
+.menu { position: relative; }
+.menu summary { list-style: none; cursor: pointer; font-size: 18px; padding: 0 4px; }
+.menu summary::-webkit-details-marker { display: none; }
+.menu-items {
+  position: absolute; right: 0; top: 30px; z-index: 20; min-width: 300px;
+  background: #fff; color: #1d1f2c; border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.15); padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+.menu-items > * {
+  text-align: left; background: none; border: none; padding: 6px 8px; border-radius: 4px; font: inherit;
+  color: inherit; cursor: pointer; text-decoration: none; display: block;
+}
+.menu-items > *:hover { background: #eceeff; }
+.toggle input { margin-right: 6px; }
+
+/* --- panes ------------------------------------------------------------------------------ */
+.panes { flex: 1 1 auto; display: flex; min-height: 0; }
+.editor-pane { flex: 1 1 62%; min-width: 320px; overflow: auto; background: var(--wp-editorBackground); position: relative; }
+.info-pane { flex: 0 0 38%; min-width: 260px; overflow: auto; background: var(--pane-bg); border-left: 1px solid var(--border); }
+.splitter { flex: 0 0 5px; cursor: col-resize; background: var(--border); }
+.splitter:hover, .splitter:focus { background: #aab0d3; outline: none; }
+#editor { min-height: 100%; }
+#infoview { padding: 6px 4px; font-size: 13px; }
+
+.notice {
+  position: sticky; top: 0; z-index: 10; margin: 0; padding: 8px 12px;
+  background: #fff6d6; border-bottom: 1px solid #e8d48a; color: #5a4500; font-size: 13px;
+}
+.notice button { margin-left: 8px; }
+.notice.bad { background: #fde7e5; border-color: #f0b4ae; color: #6d1912; }
+
+/* --- boot card ---------------------------------------------------------------------------- */
+.boot { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(246,247,251,0.85); z-index: 30; }
+.boot[hidden] { display: none; }
+.boot-card { width: min(520px, 92vw); background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); }
+.boot-card h2 { margin: 0 0 8px; font-size: 18px; }
+.boot-card progress { width: 100%; height: 10px; }
+.boot-note { color: var(--muted); font-size: 12px; margin-bottom: 0; }
+
+dialog { max-width: 640px; border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; }
+dialog h2 { margin-top: 0; }
+dialog .licences { color: var(--muted); font-size: 12px; }
+
+@media (max-width: 900px) {
+  .panes { flex-direction: column; }
+  .info-pane { flex: 0 0 40%; border-left: none; border-top: 1px solid var(--border); }
+  .splitter { display: none; }
+  .brand-sub { display: none; }
+}

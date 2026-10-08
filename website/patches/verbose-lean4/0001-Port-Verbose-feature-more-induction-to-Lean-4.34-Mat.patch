@@ -1,0 +1,199 @@
+From 4fcc05ff0b0b8cf74e7881f8a50ed0b1d29f193a Mon Sep 17 00:00:00 2001
+From: fawad haider <153737+FawadHa1der@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 17:33:07 -0400
+Subject: [PATCH 1/2] Port Verbose (feature/more-induction) to Lean 4.34 /
+ Mathlib v4.34.0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Against Mathlib 5ed2965 (v4.34.0), compiled with the toolchain release's
+native compiler (lean-v4.34.0-e1a79c1 native64); all 54 modules build,
+including the #guard_msgs tests of the help output.
+
+- GCongr: `GCongrM.run` now returns the whole `GCongr.State`; the
+  unsolved goals are its `newGoals` (Common.tryGcongrComputeLemmas,
+  Since).
+- Set notation: Mathlib v4.34 elaborates `s ⊆ t` on sets and finsets
+  to `s ≤ t` (Mathlib.Tactic.SetNotationForOrder; it only prints as
+  `⊆`) and Set has no `HasSubset` instance any more. Without a fix the
+  help tactic described set inclusions as inequalities ("s ≤ t", the
+  `#guard_msgs` test in HelpInfrastructure caught it) and the subset
+  help extensions never fired.
+  * `Lean.Expr.usesSetNotation`: an order relation on a type with a
+    `UsesSetNotationForOrder` instance.
+  * `relInfo?` gives " ⊆ " for `≤` there and nothing for `<`, `≥`, `>`
+    (`⊂`, `⊇`, `⊃` were plain propositions before, as they stay).
+  * `parse` reads such a `≤` as `.subset`.
+  * the subset hyp/goal help extensions are keyed on every `≤` (they
+    act only on `.subset`) and on `HasSubset.Subset` for other types.
+- Statements: `ToSnapshotTree` is built in `ToSnapshotTreeM` (as core's
+  `MacroExpandedSnapshot`).
+- HelpInfrastructure: `pushTac` expands to `Bind.bind q pushTactic`
+  (4.34 parses `(← $q)` in a `do` quotation as a doElem).
+- lean-toolchain: v4.34.0.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../Infrastructure/HelpInfrastructure.lean    | 35 +++++++++++++++----
+ Verbose/Tactics/Common.lean                   |  5 ++-
+ Verbose/Tactics/Help.lean                     |  9 +++--
+ Verbose/Tactics/Since.lean                    |  6 ++--
+ Verbose/Tactics/Statements.lean               |  3 +-
+ lean-toolchain                                |  2 +-
+ 6 files changed, 45 insertions(+), 15 deletions(-)
+
+diff --git a/Verbose/Infrastructure/HelpInfrastructure.lean b/Verbose/Infrastructure/HelpInfrastructure.lean
+index cb8aab4..af7959f 100644
+--- a/Verbose/Infrastructure/HelpInfrastructure.lean
++++ b/Verbose/Infrastructure/HelpInfrastructure.lean
+@@ -42,17 +42,31 @@ def Lean.Expr.relSymb : Expr → Option String
+ | .const ``HasSubset.Subset _ => pure " ⊆ "
+ | _ => none
+ 
++/-- Whether `e` is an order relation (`≤`, `<`, `≥`, `>`) on a type Mathlib writes with set
++notation. Since Mathlib v4.34 (`Mathlib.Tactic.SetNotationForOrder`), `s ⊆ t` elaborates to
++`s ≤ t` on such types (`Set`, `Finset`, …) and only prints as `s ⊆ t`; the types are the ones
++with a `UsesSetNotationForOrder` instance. -/
++def Lean.Expr.usesSetNotation (e : Expr) : MetaM Bool := do
++  unless e.getAppNumArgs == 4 && (e.isAppOf ``LE.le || e.isAppOf ``LT.lt || e.isAppOf ``GE.ge || e.isAppOf ``GT.gt) do
++    return false
++  let some cls ← observing? (mkAppM ``UsesSetNotationForOrder #[e.getArg! 0]) | return false
++  return (← trySynthInstance cls) matches .some _
++
+ /-- Given an expression which is either describing an inequality or subset or membership,
+ return a string decribing the relation and the LHS and RHS. -/
+ partial def Lean.Expr.relInfo? : Expr → MetaM (Option (String × Expr × Expr))
+ | .mvar m => do Lean.Expr.relInfo? (← m.getType'')
+-| e@(_) =>  if e.getAppNumArgs < 2 then
++| e@(_) => do
++  if e.getAppNumArgs < 2 then
+     return none
+-  else
+-    return match relSymb e.getAppFn with
+-           | some " ∈ " => some (" ∈ ", e.appArg!, e.appFn!.appArg!)
+-           | some s => some (s , e.appFn!.appArg!, e.appArg!)
+-           | none => none
++  -- `≤` on a set-notation type is `⊆` (see `usesSetNotation`); `<`, `≥` and `>` there are
++  -- `⊂`, `⊇` and `⊃`, which Verbose treated as plain propositions before Mathlib v4.34.
++  if ← e.usesSetNotation then
++    return if e.isAppOf ``LE.le then some (" ⊆ ", e.appFn!.appArg!, e.appArg!) else none
++  return match relSymb e.getAppFn with
++         | some " ∈ " => some (" ∈ ", e.appArg!, e.appFn!.appArg!)
++         | some s => some (s , e.appFn!.appArg!, e.appArg!)
++         | none => none
+ 
+ /-- For testing purposes -/
+ elab "#relInfo" t:term: command =>
+@@ -221,6 +235,13 @@ partial def parse {α : Type}
+       parse e.getAppArgs[0]! fun left ↦ parse e.getAppArgs[1]! fun right ↦ ret <| .iff e e.getAppArgs[0]! e.getAppArgs[1]! left right
+     | .const `Eq .. => ret <| .equal e e.getAppArgs[1]! e.getAppArgs[2]!
+     | .const `LE.le _ | .const `LT.lt _ | .const `GE.ge _ | .const `GT.gt _ => do
++      if ← e.usesSetNotation then
++        -- `s ⊆ t` on sets and finsets (Mathlib v4.34 elaborates it to `s ≤ t`)
++        if e.isAppOf ``LE.le then
++          let some (_, lhs, rhs) ← e.relInfo? | unreachable!
++          ret <| .subset e lhs rhs
++        else simple e
++      else
+       let some (rel, lhs, rhs) ← e.relInfo? | unreachable!
+       ret <| .ineq e lhs rel rhs
+     | .const `Membership.mem _ => do
+@@ -408,7 +429,7 @@ def pushTactic (tac : TSyntax `tactic)  : SuggestionM Unit := do
+     throwError "There is already a tactic for this suggestion. You may need to call `flush` first."
+   set {s with flushed := false, currentTactic := some tac, currentPre := match s.currentPre with | some c => some s!"{c}\n" | none => none}
+ 
+-macro "pushTac" quoted:term : term => `(do pushTactic (← $quoted))
++macro "pushTac" quoted:term : term => `(Bind.bind $quoted pushTactic)
+ 
+ syntax:max "pushCom" interpolatedStr(term) : term
+ 
+diff --git a/Verbose/Tactics/Common.lean b/Verbose/Tactics/Common.lean
+index f365fff..b5c1c62 100644
+--- a/Verbose/Tactics/Common.lean
++++ b/Verbose/Tactics/Common.lean
+@@ -459,7 +459,10 @@ def tryGcongrComputeLemmas : TacticM Bool := withMainContext do
+   trace[Verbose] s!"Will now try simplifying using gcongr and anonymous compute lemmas: {lemmas}.
+ Goal is\n{← ppGoal g}"
+   let goals ← try
+-    let (_, unsolvedGoalStates) ← g.gcongr none |>.run (sideGoalDischarger := gcongrDischarger) (mainGoalDischarger := fun g ↦ g.gcongrForward #[])
++    -- Mathlib v4.34: `GCongrM.run` returns the whole `GCongr.State`; its `newGoals` are the
++    -- unsolved goals the 4.31 API returned.
++    let (_, gcongrState) ← g.gcongr none |>.run (sideGoalDischarger := gcongrDischarger) (mainGoalDischarger := fun g ↦ g.gcongrForward #[])
++    let unsolvedGoalStates := gcongrState.newGoals
+     if unsolvedGoalStates == #[g] then
+       trace[Verbose] s!"gcongr failed. Will try lemmas directly."
+       restoreState state
+diff --git a/Verbose/Tactics/Help.lean b/Verbose/Tactics/Help.lean
+index 8b88deb..38e814e 100644
+--- a/Verbose/Tactics/Help.lean
++++ b/Verbose/Tactics/Help.lean
+@@ -218,7 +218,10 @@ def helpSinceFalse : HypHelpExt where
+ register_endpoint helpSubsetSuggestion (hyp x hx hx' : Name)
+     (r : Expr) (l ambientTypePP : Format) : SuggestionM Unit
+ 
+-@[hypHelp _ ⊆ _]
++-- Since Mathlib v4.34, `s ⊆ t` on sets and finsets elaborates to `s ≤ t`
++-- (`Mathlib.Tactic.SetNotationForOrder`), so the subset helpers are keyed on every `≤` (they act
++-- only on what `parse` reads as `.subset`) and on `HasSubset.Subset` for the other types.
++@[hypHelp LE.le _ _, HasSubset.Subset _ _]
+ def helpSubset : HypHelpExt where
+   run (goal : MVarId) (hyp : Name) (hypType : VExpr) : SuggestionM Unit := do
+   if let .subset _ lhs rhs:= hypType then
+@@ -233,7 +236,7 @@ def helpSubset : HypHelpExt where
+ register_endpoint helpSinceSubsetSuggestion (hyp x : Name) (stmt new : Term)
+     (l r : Expr) (ambientTypePP : Format) : SuggestionM Unit
+ 
+-@[hypHelp _ ⊆ _]
++@[hypHelp LE.le _ _, HasSubset.Subset _ _]
+ def helpSinceSubset : HypHelpExt where
+   run (goal : MVarId) (hyp : Name) (hypType : VExpr) : SuggestionM Unit := do
+   if let .subset _ lhs rhs:= hypType then
+@@ -631,7 +634,7 @@ def descrDirectProof : SuggestionM Unit :=
+ 
+ register_endpoint helpSubsetGoalSuggestion (l r : Format) (xN : Name) (lT : Term) : SuggestionM Unit
+ 
+-@[goalHelp _ ⊆ _]
++@[goalHelp LE.le _ _, HasSubset.Subset _ _]
+ def helpSubsetGoal : GoalHelpExt where
+   run (goal : MVarId) (g : VExpr) : SuggestionM Unit := do
+     if let .subset _e lhs rhs := g then
+diff --git a/Verbose/Tactics/Since.lean b/Verbose/Tactics/Since.lean
+index 6c32358..de4f030 100644
+--- a/Verbose/Tactics/Since.lean
++++ b/Verbose/Tactics/Since.lean
+@@ -193,9 +193,11 @@ def tryRel (g : MVarId) (hyps : Array Term) : TacticM Bool := do
+   -- forward-reasoning on that term) on each of the listed terms.
+   let assum (g : MVarId) := g.gcongrForwardStrong hyps
+   -- Time to actually run the core tactic `Lean.MVarId.gcongr`!
+-  let (_, unsolvedGoalStates) ← g.gcongr none |>.run (sideGoalDischarger := gcongr_side hyps)
++  -- Mathlib v4.34: `GCongrM.run` returns the whole `GCongr.State`; its `newGoals` are the
++  -- unsolved goals the 4.31 API returned.
++  let (_, gcongrState) ← g.gcongr none |>.run (sideGoalDischarger := gcongr_side hyps)
+                                             (mainGoalDischarger := assum)
+-  match unsolvedGoalStates.toList with
++  match gcongrState.newGoals.toList with
+   -- if all goals are solved, succeed!
+   | [] => return true
+   -- if not, fail and report the unsolved goals
+diff --git a/Verbose/Tactics/Statements.lean b/Verbose/Tactics/Statements.lean
+index 875813a..28ec114 100644
+--- a/Verbose/Tactics/Statements.lean
++++ b/Verbose/Tactics/Statements.lean
+@@ -52,7 +52,8 @@ deriving TypeName
+ 
+ open Language in
+ instance : ToSnapshotTree SimpleMacroExpandedSnapshot where
+-  toSnapshotTree s := ⟨s.toSnapshot, #[s.next.map (sync := true) toSnapshotTree]⟩
++  -- Lean 4.34: snapshot trees are built in `ToSnapshotTreeM` (as core's `MacroExpandedSnapshot`).
++  toSnapshotTreeM s := return ⟨← s.toSnapshot.transform, #[← s.next.transform]⟩
+ 
+ syntax (name := withoutSuggestions) "without_suggestions" tacticSeq : tactic
+ 
+diff --git a/lean-toolchain b/lean-toolchain
+index 18640c8..12359f9 100644
+--- a/lean-toolchain
++++ b/lean-toolchain
+@@ -1 +1 @@
+-leanprover/lean4:v4.31.0
++leanprover/lean4:v4.34.0

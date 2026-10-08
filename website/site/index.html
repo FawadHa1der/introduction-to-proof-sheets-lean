@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proof sheets · Bewijzen in de Wiskunde</title>
+    <meta name="description" content="The proof sheets of Bewijzen in de Wiskunde, checked by Lean in your browser." />
+    <link rel="stylesheet" href="/infoview/index.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <a class="brand" href="./" title="All sheets">Bewijzen in de Wiskunde <span class="brand-sub">proof sheets</span></a>
+      <nav class="sheet-nav">
+        <button id="prev" class="icon" title="Previous sheet" aria-label="Previous sheet">‹</button>
+        <select id="sheet" aria-label="Sheet"></select>
+        <button id="next" class="icon" title="Next sheet" aria-label="Next sheet">›</button>
+      </nav>
+      <span id="status" class="pill" role="status" aria-live="polite">Starting…</span>
+      <details class="menu">
+        <summary title="Sheet actions">☰</summary>
+        <div class="menu-items">
+          <button id="download">Download this sheet (.lean)</button>
+          <label class="file-button">Open a .lean file…<input id="upload" type="file" accept=".lean,text/plain" hidden /></label>
+          <button id="reset">Reset this sheet</button>
+          <label class="toggle"><input id="teacher" type="checkbox" /> Teacher mode (edit outside the exercises)</label>
+          <a href="#about" id="about-link">About this site</a>
+        </div>
+      </details>
+    </header>
+    <main class="panes">
+      <section class="editor-pane" aria-label="Sheet">
+        <div id="notice" class="notice" hidden></div>
+        <div id="editor"></div>
+      </section>
+      <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
+      <aside class="info-pane" aria-label="Goals and messages">
+        <div id="infoview"></div>
+      </aside>
+    </main>
+    <div id="boot" class="boot" hidden>
+      <div class="boot-card">
+        <h2 id="boot-title">Starting Lean in your browser</h2>
+        <p id="boot-label">Preparing…</p>
+        <progress id="boot-progress" max="1"></progress>
+        <p class="boot-note">The first visit downloads Lean (160 MB) and this sheet's environment (a few hundred MB); later visits use the browser's cache.</p>
+      </div>
+    </div>
+    <dialog id="about">
+      <h2>About this site</h2>
+      <p>These are the proof sheets of the course <em>Bewijzen in de Wiskunde</em> (Utrecht University), from
+        <a href="https://github.com/impermeable/introduction-to-proof-sheets-lean" target="_blank" rel="noopener">impermeable/introduction-to-proof-sheets-lean</a>,
+        licensed <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>, adapted for Lean 4.34. They follow
+        D. Newstead, <em>An Infinite Descent into Pure Mathematics</em>.</p>
+      <p>Your proofs are checked by <a href="https://lean-lang.org" target="_blank" rel="noopener">Lean</a> 4.34 running in this browser tab (WebAssembly, via QED64),
+        with Mathlib, <a href="https://github.com/PatrickMassot/verbose-lean4" target="_blank" rel="noopener">Verbose Lean</a> and the Waterproof genre for
+        <a href="https://github.com/leanprover/verso" target="_blank" rel="noopener">Verso</a>. The editor is the
+        <a href="https://github.com/impermeable/waterproof-editor" target="_blank" rel="noopener">Waterproof editor</a>. Nothing you type leaves your computer;
+        your work is kept in this browser.</p>
+      <p>Requirements: a desktop Chrome or Edge (133 or later) or Firefox (134 or later), and about 8 GB of free memory.</p>
+      <p class="licences">Licences: course content CC BY-SA 4.0; Lean, Mathlib, Verso, Verbose Lean and the InfoView Apache-2.0; Waterproof editor and genre MIT;
+        the Waterproof Lean file format and client code LGPL-2.1-only; QED64 MIT.</p>
+      <form method="dialog"><button>Close</button></form>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

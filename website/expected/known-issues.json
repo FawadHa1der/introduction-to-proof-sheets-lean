@@ -1,0 +1,18 @@
+{
+  "schema": "proof-sheets.known-issues/v1",
+  "note": "Errors outside exercise holes that the course has on native Lean 4.31 as well (the same sheet text): content issues, not port or browser ones. check-sheets.py reports them as known instead of failing.",
+  "issues": [
+    {
+      "sheet": "L08_Strong_Induction.sheet1_strong_induction",
+      "line": 212,
+      "textStartsWith": "'calc' expression has type",
+      "why": "Example 4.3.4 expects `Let's proceed by strong induction on n` to make a base case and a step, but nothing enables Verbose's enableBaseCasesForStrongInduction, so it makes only the step."
+    },
+    {
+      "sheet": "L08_Strong_Induction.sheet1_strong_induction",
+      "line": 215,
+      "textStartsWith": "No goals to be solved",
+      "why": "follows from the previous one"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+From 82ddd2fbac78154124d2978c7ebed64b07b3692e Mon Sep 17 00:00:00 2001
+From: fawad haider <153737+FawadHa1der@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 17:21:18 -0400
+Subject: [PATCH] Port WaterproofGenre to Lean 4.34 and the ported Verso fork
+
+- multilean: call the 4.34 elabCommandsCore with the parser input
+  explicitly (the synthetic same-shape source, from the first Lean
+  fence), as the ported Verso fork's own multilean does.
+- GoalWidget: import only the ProofWidgets modules the panel uses
+  (Component.Panel.Basic, Component.OfRpcMethod, Data.Html) instead of
+  the ProofWidgets umbrella and GoalTypePanel. All three are in the
+  Lean 4.34 browser toolchain's Mathlib pack, so the website needs no
+  ProofWidgets build (and no widget JavaScript bundles) of its own.
+- lean-toolchain: v4.34.0.
+
+The lakefile still names the upstream Verso fork; the website builds
+these sources with the toolchain release's native compiler (see the
+course repository's website/ folder), not with Lake.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ WaterproofGenre.lean            | 6 +++++-
+ WaterproofGenre/GoalWidget.lean | 8 ++++++--
+ lean-toolchain                  | 2 +-
+ 3 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/WaterproofGenre.lean b/WaterproofGenre.lean
+index f96dcc8..880a37a 100644
+--- a/WaterproofGenre.lean
++++ b/WaterproofGenre.lean
+@@ -322,7 +322,11 @@ def multilean : DirectiveExpanderOf LeanBlockConfig
+       if config.show then
+         let col? := body.raw.getPos? |>.map (← getFileMap).utf8PosToLspPos |>.map (·.character)
+         warnLongLines col? body
+-    elabCommandsCore config source (← getRef) source
++    -- `source` keeps every byte position of the file up to the last block, so the commands'
++    -- positions are the file's; parsing and highlighting start at the first Lean fence.
++    let startPos := leanBodies[0]!.raw.getPos?.getD 0
++    let ictx := Parser.mkInputContext source (← getFileName)
++    elabCommandsCore config ictx startPos (FileMap.ofString source) (← getRef) source
+       (wpToHighlightedMultileanBlock placeholders explanationBlocks)
+ 
+ end WaterproofGenre
+diff --git a/WaterproofGenre/GoalWidget.lean b/WaterproofGenre/GoalWidget.lean
+index 97274f0..f78a7dd 100644
+--- a/WaterproofGenre/GoalWidget.lean
++++ b/WaterproofGenre/GoalWidget.lean
+@@ -1,5 +1,9 @@
+-import ProofWidgets
+-import ProofWidgets.Component.Panel.GoalTypePanel
++-- Only the ProofWidgets modules this panel uses (not the `ProofWidgets` umbrella or
++-- GoalTypePanel): every one of them is in the Lean 4.34 browser toolchain's Mathlib pack,
++-- so the website needs no ProofWidgets build of its own (no widget JavaScript bundles).
++import ProofWidgets.Component.Panel.Basic
++import ProofWidgets.Component.OfRpcMethod
++import ProofWidgets.Data.Html
+ open Lean Server ProofWidgets Jsx
+ 
+ @[server_rpc_method]
+diff --git a/lean-toolchain b/lean-toolchain
+index 133a3f7..12359f9 100644
+--- a/lean-toolchain
++++ b/lean-toolchain
+@@ -1 +1 @@
+-leanprover/lean4:v4.31.0
+\ No newline at end of file
++leanprover/lean4:v4.34.0

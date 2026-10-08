@@ -1,0 +1,59 @@
+From d9053e5edeb232cb62ff6977879bc130a9e31ba4 Mon Sep 17 00:00:00 2001
+From: fawad haider <153737+FawadHa1der@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 19:33:48 -0400
+Subject: [PATCH 2/2] SingleValPersistentEnvExtension: build the imported state
+ with a loop
+
+The extension's imported state is the last entry any imported module
+exported, else the default. It was computed with
+`mkStateFromImportedEntries (fun _ b => return b) (return default)`.
+Called from this generic function, that runs core's unspecialized
+`Array.foldl`, whose steps nest one level per imported module (and the
+`ImportM` accumulator added a closure chain as deep). Native Lean has the
+stack for it. The WebAssembly Lean of the browser toolchain
+(lean-v4.34.0-e1a79c1) does not: importing a Mathlib + Verbose
+environment (about 3,000 modules) overflowed the JavaScript stack
+("Maximum call stack size exceeded") in finalizeImport, before any
+command ran, so Verbose could not be loaded in the browser at all.
+
+`lastImportedEntry?` walks the module array backwards with a tail call
+(the IR interpreter turns self tail calls into a loop) and stops at the
+first module with an entry, which is the same value. Isolated with test
+modules: the old fold overflows at about 2,400 imported modules from a
+generic helper; the loop imports cleanly; a Mathlib + Verbose + Verso
+snapshot now bakes (3,494 modules).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../SingleValPersistentEnvExtension.lean           | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/Verbose/Infrastructure/SingleValPersistentEnvExtension.lean b/Verbose/Infrastructure/SingleValPersistentEnvExtension.lean
+index 211d44e..8b0a7d8 100644
+--- a/Verbose/Infrastructure/SingleValPersistentEnvExtension.lean
++++ b/Verbose/Infrastructure/SingleValPersistentEnvExtension.lean
+@@ -10,11 +10,23 @@ def SingleValPersistentEnvExtension (α : Type) := PersistentEnvExtension α α
+ instance {α} [Inhabited α] : Inhabited (SingleValPersistentEnvExtension α) :=
+   inferInstanceAs <| Inhabited  <| PersistentEnvExtension α α α
+ 
++/-- The last entry of the last module (before position `i`) that exported one. -/
++private partial def lastImportedEntry? {α : Type} (as : Array (Array α)) (i : Nat) : Option α :=
++  if i = 0 then none
++  else match (as.getD (i - 1) #[]).back? with
++    | some e => some e
++    | none => lastImportedEntry? as (i - 1)
++
+ def registerSingleValPersistentEnvExtension (name : Name) (α : Type) [Inhabited α] : IO (SingleValPersistentEnvExtension α) :=
+   registerPersistentEnvExtension {
+     name            := name,
+     mkInitial       := pure default,
+-    addImportedFn   := mkStateFromImportedEntries (fun _ b => return b) (return default),
++    -- The last imported entry, else the default: what `mkStateFromImportedEntries (fun _ b => return
++    -- b) (return default)` computed. That fold, called from this generic function, runs core's
++    -- unspecialized `Array.foldl`, whose steps nest one level per imported module. Native Lean
++    -- has the stack for it; the WebAssembly runtime runs out of JavaScript stack while importing
++    -- the 3,000-odd modules of a Mathlib + Verbose environment. This loop is a tail call.
++    addImportedFn   := fun as => pure ((lastImportedEntry? as as.size).getD default),
+     addEntryFn      := (λ _ b => b),
+     exportEntriesFn := λ x => #[x]
+   }
