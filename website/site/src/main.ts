@@ -3,6 +3,7 @@
 import "@impermeable/waterproof-editor/styles.css";
 import "@impermeable/waterproof-editor/waterproof-defaults.css";
 import "./style.css";
+import "./lean-format/infoview-trim.css";
 import {
   ThemeStyle,
   WaterproofEditor,
@@ -115,6 +116,7 @@ editorRef.current = editor;
 
 const editorSink: EditorSink = {
   setActiveDiagnostics: (d) => editor.setActiveDiagnostics(d),
+  handleCompletions: (c) => editor.handleCompletions(c as never),
   setInputAreaStatus: (s) => editor.setInputAreaStatus(s),
   reportProgress: (at, total, label) => editor.reportProgress(at, total, label),
   setBusyIndicator: (from) => editor.setBusyIndicator(from),
@@ -185,13 +187,18 @@ function fillSelect(): void {
 
 // --- Lean ----------------------------------------------------------------------------------------
 const MB = 1024 * 1024;
+let firstReady = false;
+/** Boot progress: the start-up card until Lean has checked something once; after that (another
+ * sheet's environment loading) the status pill, so the page stays usable. */
 function bootBusy(label: string, info?: { loaded?: number; total?: number; unit?: string; stage?: string }): void {
+  let text = label;
+  if (info?.total && (info.unit === "bytes" || info.total > 1e6)) text = `${label} — ${Math.round((info.loaded ?? 0) / MB)} of ${Math.round(info.total / MB)} MB`;
+  if (firstReady) { setStatus(`Loading Lean for this sheet… ${info?.total ? Math.round(100 * (info.loaded ?? 0) / info.total) + "%" : ""}`, "busy"); return; }
   ui.boot.hidden = false;
-  ui.bootLabel.textContent = label;
+  ui.bootLabel.textContent = text;
   if (info?.total) {
     ui.bootProgress.max = info.total;
     ui.bootProgress.value = info.loaded ?? 0;
-    if (info.unit === "bytes" || (info.total > 1e6)) ui.bootLabel.textContent = `${label} — ${Math.round((info.loaded ?? 0) / MB)} of ${Math.round(info.total / MB)} MB`;
   } else {
     ui.bootProgress.removeAttribute("value");
   }
@@ -208,8 +215,8 @@ function onRelay(s: RelayStatus): void {
   if (s.relay === "rebooting") { setStatus("Restarting Lean…", "busy"); return; }
   switch (s.phase) {
     case "booting": case "starting": setStatus("Starting Lean…", "busy"); break;
-    case "elaborating": setStatus("Checking…", "busy"); bootIdle(); break;
-    case "ready": setStatus("Checked", "ok"); bootIdle(); break;
+    case "elaborating": setStatus("Checking…", "busy"); bootIdle(); firstReady = true; break;
+    case "ready": setStatus("Checked", "ok"); bootIdle(); firstReady = true; break;
     case "headerRefused": setStatus("Imports not available", "bad"); bootIdle(); break;
     case "dead": setStatus("Lean stopped", "bad"); break;
   }
@@ -238,8 +245,8 @@ async function startLean(text: string): Promise<void> {
   }
   client = new LeanClient(checker.relay.clientPort, editorSink);
   client.onStatus.add(({ busy }) => { if (busy) setStatus("Checking…", "busy"); });
+  client.open(doc); // first: it sends `initialize`, whose answer the InfoView waits for
   infoview.attach(client);
-  client.open(doc);
 }
 
 // --- page actions ---------------------------------------------------------------------------------
@@ -277,6 +284,13 @@ async function main(): Promise<void> {
   sheets = catalogue.lectures.flatMap((l) => l.sheets);
   fillSelect();
   ui.teacher.checked = store.teacherMode();
+  // Waterproof's InfoView default: Lean's own tactic state hidden ("none"), the genre's
+  // "We need to show" panel and the messages shown (setting waterproof.visibilityOfHypotheses).
+  const hyps = $<HTMLInputElement>("hyps");
+  hyps.checked = store.showTacticState();
+  const applyHyps = () => document.documentElement.setAttribute("data-wp-hyp-visibility", hyps.checked ? "all" : "none");
+  applyHyps();
+  hyps.addEventListener("change", () => { store.setShowTacticState(hyps.checked); applyHyps(); });
   wireSplitter();
 
   const params = new URLSearchParams(location.search);

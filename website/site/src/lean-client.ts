@@ -5,10 +5,13 @@
 // extension does: an error in the hole, then the goals at the QED that closes it, then a
 // "declaration uses sorry" warning.
 //
-// Two deliberate changes from the extension, both for the browser's checker:
+// Three deliberate changes from the extension, all for the browser's checker:
 // - the goal requests for the holes run at most two at a time (QED64 answers at most six
 //   requests at once, and the extension fans out one per hole);
-// - every request for an older version of the text is dropped when it returns.
+// - every request for an older version of the text is dropped when it returns;
+// - the document's symbols (the editor's completions) are asked for once per version, when
+//   Lean is idle: in Lean 4.34 the request waits for the whole file, and the extension sends
+//   one per keystroke.
 import {
   BrowserMessageReader,
   BrowserMessageWriter,
@@ -34,6 +37,7 @@ interface PlainGoal { rendered: string; goals: string[] }
 /** What the client needs from the editor (a subset of the Waterproof editor's API). */
 export interface EditorSink {
   setActiveDiagnostics(d: OffsetDiagnostic[]): void;
+  handleCompletions(c: { label: string; detail: string; type: string; template: string }[]): void;
   setInputAreaStatus(s: InputAreaStatus[]): void;
   reportProgress(at: number, total: number, label: string): void;
   setBusyIndicator(from: number): void;
@@ -60,6 +64,9 @@ export class LeanClient {
   private statusTimer: number | undefined;
   private statusRun = 0;
   private initialized = false;
+  private symbolsVersion = -1;
+  /** The server's answer to `initialize` (QED64's front door gives it): the InfoView needs it. */
+  initializeResult: Promise<unknown> | null = null;
   /** Listeners the InfoView subscribes (raw LSP traffic). */
   readonly onDiagnostics = new Set<(p: PublishDiagnosticsParams) => void>();
   readonly onNotification = new Set<(method: string, params: unknown) => void>();
@@ -87,7 +94,7 @@ export class LeanClient {
    * sheet with the same imports is a full-text change of the one it holds. */
   open(doc: TextDocument): void {
     if (!this.initialized) {
-      void this.connection.sendRequest("initialize", { processId: null, rootUri: null, capabilities: {} }).catch(() => undefined);
+      this.initializeResult = this.connection.sendRequest("initialize", { processId: null, rootUri: null, capabilities: {} }).catch(() => null);
       this.connection.sendNotification("initialized", {});
       this.initialized = true;
     }
@@ -156,6 +163,21 @@ export class LeanClient {
     this.isBusy = processing.length > 0;
     for (const f of this.onStatus) f({ busy: this.isBusy, statuses: null });
     this.scheduleInputAreaStatus();
+    if (!this.isBusy) void this.updateCompletions(doc);
+  }
+
+  /** The document's symbols as completions (LspClient.updateCompletions). */
+  private async updateCompletions(doc: TextDocument): Promise<void> {
+    if (this.symbolsVersion === doc.version) return;
+    this.symbolsVersion = doc.version;
+    let symbols: { name: string; detail?: string; children?: unknown[] }[] | null;
+    try {
+      symbols = await this.connection.sendRequest("textDocument/documentSymbol", { textDocument: { uri: doc.uri } }) as typeof symbols;
+    } catch {
+      return; // superseded by an edit (ContentModified): the next idle asks again
+    }
+    if (doc !== this.doc || doc.version !== this.symbolsVersion || !symbols) return;
+    this.editor.handleCompletions(symbols.map((sym) => ({ label: sym.name, detail: sym.detail?.toLowerCase() ?? "", type: "variable", template: sym.name })));
   }
 
   // --- exercise holes ------------------------------------------------------------------------

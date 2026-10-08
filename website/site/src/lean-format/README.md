@@ -5,6 +5,7 @@ These files are copied verbatim from impermeable/waterproof-vscode at commit
 
 - `editor/src/leanFileConfiguration.ts`, `leanSerializer.ts`, `versoMarkdownSupport.ts`
 - `editor/src/document-construction/{construct-document,lean,inner-blocks,block-extraction}.ts`
+- `views/infoview/trim.css` as `infoview-trim.css` (the extension's InfoView declutter rules)
 - `completions/tacticsLean.json`
 - `completions/symbols+lean.json` as `symbols-lean.json`, generated in the fork by
   `node scripts/generate-symbols.mts` with @leanprover/unicode-input 0.1.9 (the version the

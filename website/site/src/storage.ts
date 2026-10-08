@@ -24,3 +24,5 @@ export const lastSheet = (): string | null => read<string>("last");
 export const setLastSheet = (id: string): void => write("last", id);
 export const teacherMode = (): boolean => read<boolean>("teacher") ?? false;
 export const setTeacherModeStored = (on: boolean): void => write("teacher", on);
+export const showTacticState = (): boolean => read<boolean>("tacticState") ?? false;
+export const setShowTacticState = (on: boolean): void => write("tacticState", on);

@@ -127,25 +127,28 @@ export function mountInfoview(el: HTMLElement, text: TextSink): InfoviewHost {
   loadRenderInfoview(IMPORTS, [editorApi, el], (a) => {
     api = a;
     void api.changedInfoviewConfig({ ...defaultInfoviewConfig, autoOpenShowsGoal: true });
-    if (client) restarted();
+    if (client) void restarted();
   });
 
-  function restarted() {
+  /** As the extension's InfoProvider.initInfoview/resetServerState: `initialize` once with the
+   * cursor, then the server's (re)start with its `initialize` answer, then the cursor again. */
+  async function restarted() {
     if (!api || !client) return;
-    void api.serverRestarted({ capabilities: {} } as never);
+    const c = client;
+    const init = (await c.initializeResult) ?? { capabilities: {} };
     const loc = location(pendingCursor.offset ?? text.cursor());
-    if (loc) {
-      if (!initialized) { initialized = true; void api.initialize(loc); }
-      else void api.changedCursorLocation(loc);
-    }
+    if (c !== client || !api || !loc) return;
+    if (!initialized) { initialized = true; await api.initialize(loc); }
+    await api.serverStopped(undefined);
+    await api.serverRestarted(init as never);
+    await api.changedCursorLocation(loc);
   }
 
   return {
     cursorAt(offset) {
       pendingCursor.offset = offset;
       const loc = location(offset);
-      if (!api || !loc) return;
-      if (!initialized) { initialized = true; void api.initialize(loc); return; }
+      if (!api || !loc || !initialized) return; // restarted() initializes with the latest cursor
       void api.changedCursorLocation(loc);
     },
     attach(c) {
@@ -162,7 +165,7 @@ export function mountInfoview(el: HTMLElement, text: TextSink): InfoviewHost {
       c.onNotification.add(onNote);
       c.onDiagnostics.add(onDiag);
       detach = () => { c.onNotification.delete(onNote); c.onDiagnostics.delete(onDiag); };
-      restarted();
+      void restarted();
     },
     documentChanged() {
       const doc = client?.document;
