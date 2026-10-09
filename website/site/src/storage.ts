@@ -25,4 +25,8 @@ export const setLastSheet = (id: string): void => write("last", id);
 export const teacherMode = (): boolean => read<boolean>("teacher") ?? false;
 export const setTeacherModeStored = (on: boolean): void => write("teacher", on);
 export const showTacticState = (): boolean => read<boolean>("tacticState") ?? false;
+/** The environments (snapshot entry names) this browser used last, most recent first: the ones
+ * whose ~1 GB inflated regions the cache keeps (qed64.ts). */
+export const recentEnvironments = (): string[] => read<string[]>("recentEnvironments") ?? [];
+export const setRecentEnvironments = (names: string[]): void => write("recentEnvironments", names);
 export const setShowTacticState = (on: boolean): void => write("tacticState", on);

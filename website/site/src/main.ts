@@ -142,19 +142,26 @@ async function originalText(s: Sheet): Promise<string> {
   return r.text();
 }
 
+/** Each call supersedes the ones before it: a sheet whose text arrives after a later choice is dropped. */
+let openSeq = 0;
 async function openSheet(s: Sheet, opts: { reset?: boolean; text?: string } = {}): Promise<void> {
-  if (sheet && doc.getText()) store.saveSheet(sheet.id, doc.getText(), sheet.sha256);
-  sheet = s;
+  const seq = ++openSeq;
   let text = opts.text;
-  notice(null);
+  const saved = text === undefined && !opts.reset ? store.loadSheet(s.id) : null;
   if (text === undefined) {
-    const saved = opts.reset ? null : store.loadSheet(s.id);
-    if (opts.reset) store.forgetSheet(s.id);
     text = saved ? saved.text : await originalText(s);
-    if (saved && saved.sha256 !== s.sha256) {
-      notice(`This sheet was updated on the site after you started it. You are seeing your saved version. <button id="take-new">Start from the new version</button>`);
-      document.getElementById("take-new")?.addEventListener("click", () => void openSheet(s, { reset: true }));
-    }
+    if (seq !== openSeq) return;
+  }
+  // Only now, with the new text in hand, does the open sheet change: until here `sheet` and `doc`
+  // are still the previous sheet's, and its work is saved under its own id.
+  window.clearTimeout(saveTimer);
+  if (sheet && doc.getText()) store.saveSheet(sheet.id, doc.getText(), sheet.sha256);
+  if (opts.reset) store.forgetSheet(s.id);
+  sheet = s;
+  notice(null);
+  if (saved && saved.sha256 !== s.sha256) {
+    notice(`This sheet was updated on the site after you started it. You are seeing your saved version. <button id="take-new">Start from the new version</button>`);
+    document.getElementById("take-new")?.addEventListener("click", () => void openSheet(s, { reset: true }));
   }
   store.setLastSheet(s.id);
   ui.select.value = s.id;
@@ -223,7 +230,7 @@ function onRelay(s: RelayStatus): void {
   if (s.lastDeath && s.relay === "serving") notice(null);
 }
 
-async function startLean(text: string): Promise<void> {
+async function startLean(): Promise<void> {
   try {
     checkCapabilities();
   } catch (e) {
@@ -236,7 +243,8 @@ async function startLean(text: string): Promise<void> {
   const entryOf = new Map<string, string>();
   for (const s of sheets) if (s.entry) entryOf.set(s.imports.join("\n"), s.entry);
   try {
-    checker = await Checker.boot(text, { busy: bootBusy, idle: bootIdle, relay: onRelay }, (imports) => entryOf.get(imports.join("\n")) ?? null);
+    // The text of whatever sheet is open when the artifacts are installed, not of the one open now.
+    checker = await Checker.boot(() => doc.getText(), { busy: bootBusy, idle: bootIdle, relay: onRelay }, (imports) => entryOf.get(imports.join("\n")) ?? null);
   } catch (e) {
     bootIdle();
     setStatus("Lean failed to start", "bad");
@@ -327,7 +335,7 @@ async function main(): Promise<void> {
   $<HTMLAnchorElement>("about-link").addEventListener("click", (e) => { e.preventDefault(); ui.about.showModal(); });
   addEventListener("pagehide", () => store.saveSheet(sheet.id, doc.getText(), sheet.sha256));
 
-  await startLean(doc.getText());
+  await startLean();
 }
 
 if (import.meta.env.DEV) {
