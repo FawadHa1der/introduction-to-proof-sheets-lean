@@ -20,7 +20,7 @@ globalThis.addEventListener ??= () => {};
 const store = new Map();
 globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
 const { Checker } = await import(pathToFileURL(out).href);
-const { log, LspRelay, cached } = await import(pathToFileURL(stub).href);
+const { log, LspRelay, cached, finishDownload } = await import(pathToFileURL(stub).href);
 
 const artifacts = { snapshots: { snapshots: ["init", "A", "B", "C"].map((name) => ({ name })) } };
 const entryFor = (imports) => ({ "X.A": "A", "X.B": "B", "X.C": "C" })[imports.join("\n")] ?? null;
@@ -47,15 +47,17 @@ test("a switch during a boot waits for the boot, and typing does not lose it", (
   const c = make(sheet("A"));
   c.prepare(sheet("B")); c.prepare(sheet("B", " (typed)"));
   relay().serve(); relay().serve();
-  assert.deepEqual(steps(), ["boot A", "prefetch B", "serving A", "boot B", "serving B"]);
+  // No download while A boots (A's boot is downloading its own); B's starts with the restart.
+  assert.deepEqual(steps(), ["boot A", "serving A", "prefetch B", "boot B", "serving B"]);
 });
 
 test("switching away and back during a boot restarts nothing more", () => {
   const c = make(sheet("A")); relay().serve();
   c.prepare(sheet("B")); c.prepare(sheet("A")); c.prepare(sheet("B"));
   relay().serve();
-  // B's boot fetches B itself: the switch back stops the other downloads and starts none.
-  assert.deepEqual(steps(), ["boot A", "serving A", "prefetch B", "boot B", "abort B", "prefetch A", "abort A", "serving B"]);
+  // B's download is the booting session's: it stays, and A (running a moment ago, still cached)
+  // would only be fetched after it; the switch back to B leaves nothing to do.
+  assert.deepEqual(steps(), ["boot A", "serving A", "prefetch B", "boot B", "serving B"]);
 });
 
 test("back to the booting entry during a later switch's wait cancels that switch", () => {
@@ -85,4 +87,20 @@ test("the cache keeps the two most recent environments and the target, across vi
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(JSON.parse(store.get("proofsheets:v1:recentEnvironments")), ["C", "B"]);
   assert.ok(log.includes("evict A"));
+});
+
+test("a switch during a boot keeps the booting environment's download and starts no second one", async () => {
+  const c = make(sheet("A")); relay().serve();
+  c.prepare(sheet("B")); c.prepare(sheet("C"));
+  assert.deepEqual(steps(), ["boot A", "serving A", "prefetch B", "boot B"]);
+  finishDownload("B"); await new Promise((r) => setTimeout(r, 0)); // B's boot used it, then serves
+  relay().serve();
+  assert.deepEqual(steps().slice(4), ["serving B", "prefetch C", "boot C"]);
+});
+
+test("a crash reboot onto another entry stops the download the student left behind", () => {
+  const c = make(sheet("A")); relay().serve();
+  c.prepare(sheet("B")); c.prepare(sheet("A"));
+  relay().crash();
+  assert.deepEqual(steps(), ["boot A", "serving A", "prefetch B", "boot B", "abort B", "boot A"]);
 });

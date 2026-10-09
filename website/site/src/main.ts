@@ -63,7 +63,8 @@ function notice(html: string | null, kind: "" | "bad" = ""): void {
 
 // --- the editor --------------------------------------------------------------------------------
 let doc = new TextDocument(URI, "", 0);
-let sheet: Sheet;
+/** The open sheet; undefined until the first one has loaded. */
+let sheet: Sheet | undefined;
 let client: LeanClient | null = null;
 let checker: Checker | null = null;
 let cursorOffset = 0;
@@ -126,7 +127,8 @@ const editorSink: EditorSink = {
 function onEditorChange(change: DocChange | WrappingDocChange): void {
   doc.apply(change);
   window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => store.saveSheet(sheet.id, doc.getText(), sheet.sha256), 400);
+  const open = sheet;
+  if (open) saveTimer = window.setTimeout(() => store.saveSheet(open.id, doc.getText(), open.sha256), 400);
   checker?.prepare(doc.getText());
   client?.changed();
   infoview.documentChanged();
@@ -149,7 +151,16 @@ async function openSheet(s: Sheet, opts: { reset?: boolean; text?: string } = {}
   let text = opts.text;
   const saved = text === undefined && !opts.reset ? store.loadSheet(s.id) : null;
   if (text === undefined) {
-    text = saved ? saved.text : await originalText(s);
+    try {
+      text = saved ? saved.text : await originalText(s);
+    } catch (e) {
+      if (seq !== openSeq) return;
+      // The selector shows the sheet that is still open, or nothing, so that any choice (this one
+      // again included) is a change.
+      if (sheet) ui.select.value = sheet.id; else ui.select.selectedIndex = -1;
+      notice(`“${escapeHtml(s.title)}” could not be loaded (${escapeHtml(String((e as Error).message ?? e))}). Check the connection and pick it again.`, "bad");
+      return;
+    }
     if (seq !== openSeq) return;
   }
   // Only now, with the new text in hand, does the open sheet change: until here `sheet` and `doc`
@@ -175,6 +186,7 @@ async function openSheet(s: Sheet, opts: { reset?: boolean; text?: string } = {}
   editor.setTeacherMode(ui.teacher.checked);
   checker?.prepare(text);
   client?.open(doc);
+  checker?.relay.rearm(); // a Lean stopped after repeated crashes gets a fresh start on a new sheet
   infoview.documentChanged();
 }
 
@@ -195,12 +207,20 @@ function fillSelect(): void {
 // --- Lean ----------------------------------------------------------------------------------------
 const MB = 1024 * 1024;
 let firstReady = false;
+/** What the pill says while Lean (re)starts: chosen by why the relay reboots (onRelay). */
+let rebootLabel = "Starting Lean…";
 /** Boot progress: the start-up card until Lean has checked something once; after that (another
  * sheet's environment loading) the status pill, so the page stays usable. */
-function bootBusy(label: string, info?: { loaded?: number; total?: number; unit?: string; stage?: string }): void {
+function bootBusy(label: string, info?: { loaded?: number; total?: number; unit?: string; stage?: string; step?: string }): void {
   let text = label;
   if (info?.total && (info.unit === "bytes" || info.total > 1e6)) text = `${label} — ${Math.round((info.loaded ?? 0) / MB)} of ${Math.round(info.total / MB)} MB`;
-  if (firstReady) { setStatus(`Loading Lean for this sheet… ${info?.total ? Math.round(100 * (info.loaded ?? 0) / info.total) + "%" : ""}`, "busy"); return; }
+  if (firstReady) {
+    // A percentage only while the environment downloads (or inflates); reading it from the
+    // browser's storage and the runtime's stages are quick and would restart the count.
+    const env = info?.stage === "snapshot" && (info.step === "download" || info.step === "inflate") && info.unit === "bytes" && info.total;
+    setStatus(env ? `Preparing this sheet's environment… ${Math.round(100 * (info.loaded ?? 0) / info.total!)}%` : rebootLabel, "busy");
+    return;
+  }
   ui.boot.hidden = false;
   ui.bootLabel.textContent = text;
   if (info?.total) {
@@ -216,12 +236,17 @@ function bootIdle(): void { ui.boot.hidden = true; }
 function onRelay(s: RelayStatus): void {
   if (s.relay === "halted") {
     setStatus("Lean stopped", "bad");
-    notice("Lean crashed repeatedly on this sheet and was stopped. Edit the sheet to start it again, or reload the page.", "bad");
+    notice("Lean crashed repeatedly on this sheet and was stopped. Edit the sheet or open another one to start it again, or reload the page.", "bad");
     return;
   }
-  if (s.relay === "rebooting") { setStatus("Restarting Lean…", "busy"); return; }
+  if (s.relay === "rebooting") {
+    // boot: the first start; user: a switch to another environment (or a re-armed Lean); else a crash.
+    rebootLabel = s.rebootReason === "boot" ? "Starting Lean…" : s.rebootReason === "user" ? "Loading Lean for this sheet…" : "Restarting Lean…";
+    setStatus(rebootLabel, "busy");
+    return;
+  }
   switch (s.phase) {
-    case "booting": case "starting": setStatus("Starting Lean…", "busy"); break;
+    case "booting": case "starting": setStatus(rebootLabel, "busy"); break; // the serving relay's last start-up steps
     case "elaborating": setStatus("Checking…", "busy"); bootIdle(); firstReady = true; break;
     case "ready": setStatus("Checked", "ok"); bootIdle(); firstReady = true; break;
     case "headerRefused": setStatus("Imports not available", "bad"); bootIdle(); break;
@@ -259,6 +284,7 @@ async function startLean(): Promise<void> {
 
 // --- page actions ---------------------------------------------------------------------------------
 function download(): void {
+  if (!sheet) return;
   const blob = new Blob([doc.getText()], { type: "text/plain" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -317,23 +343,25 @@ async function main(): Promise<void> {
   }
 
   ui.select.addEventListener("change", () => { const s = sheets.find((x) => x.id === ui.select.value); if (s) void openSheet(s); });
-  ui.prev.addEventListener("click", () => { const i = sheets.indexOf(sheet); if (i > 0) void openSheet(sheets[i - 1]); });
-  ui.next.addEventListener("click", () => { const i = sheets.indexOf(sheet); if (i < sheets.length - 1) void openSheet(sheets[i + 1]); });
+  ui.prev.addEventListener("click", () => { const i = sheet ? sheets.indexOf(sheet) : -1; if (i > 0) void openSheet(sheets[i - 1]); });
+  ui.next.addEventListener("click", () => { const i = sheet ? sheets.indexOf(sheet) : -1; if (i < sheets.length - 1) void openSheet(sheets[i + 1]); });
   $<HTMLButtonElement>("download").addEventListener("click", download);
   $<HTMLButtonElement>("reset").addEventListener("click", () => {
-    if (confirm(`Reset “${sheet.title}” to the original sheet? Your work on it will be lost.`)) void openSheet(sheet, { reset: true });
+    const open = sheet;
+    if (open && confirm(`Reset “${open.title}” to the original sheet? Your work on it will be lost.`)) void openSheet(open, { reset: true });
   });
   $<HTMLInputElement>("upload").addEventListener("change", async (e) => {
     const f = (e.target as HTMLInputElement).files?.[0];
-    if (!f) return;
+    const open = sheet;
+    if (!f || !open) return;
     const text = await f.text();
     (e.target as HTMLInputElement).value = "";
-    await openSheet(sheet, { text });
-    store.saveSheet(sheet.id, text, sheet.sha256);
+    await openSheet(open, { text });
+    store.saveSheet(open.id, text, open.sha256);
   });
   ui.teacher.addEventListener("change", () => { store.setTeacherModeStored(ui.teacher.checked); editor.setTeacherMode(ui.teacher.checked); });
   $<HTMLAnchorElement>("about-link").addEventListener("click", (e) => { e.preventDefault(); ui.about.showModal(); });
-  addEventListener("pagehide", () => store.saveSheet(sheet.id, doc.getText(), sheet.sha256));
+  addEventListener("pagehide", () => { if (sheet) store.saveSheet(sheet.id, doc.getText(), sheet.sha256); });
 
   await startLean();
 }

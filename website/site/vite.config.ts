@@ -55,12 +55,12 @@ function artifacts(req: Connect.IncomingMessage, res: import("node:http").Server
     res.setHeader("Content-Range", `bytes ${start}-${end}/${size}`);
     res.setHeader("Content-Length", String(end - start + 1));
     if (req.method === "HEAD") return res.end();
-    fs.createReadStream(file, { start, end }).pipe(res);
+    fs.createReadStream(file, { start, end }).on("error", () => res.destroy()).pipe(res);
     return;
   }
   res.setHeader("Content-Length", String(size));
   if (req.method === "HEAD") return res.end();
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file).on("error", () => res.destroy()).pipe(res); // a file replaced mid-request (fetch lane) must not stop the server
 }
 
 const serveForQed64: Plugin = {

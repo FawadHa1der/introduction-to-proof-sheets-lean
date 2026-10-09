@@ -26,8 +26,15 @@ export const installArtifacts = async () => ({});
 export const cached = new Set();
 export const isRawCached = async (e) => cached.has(e.name);
 export const removeRawRegion = async (e) => { log.push(`evict ${e.name}`); cached.delete(e.name); return true; };
+const downloads = new Map();
+/** A download settles when the test says so (or when it is aborted). */
+export const finishDownload = (name) => downloads.get(name)?.({ status: "done" });
 export const prefetchRaw = (e, opts) => {
   log.push(`prefetch ${e.name}`);
-  opts?.signal?.addEventListener("abort", () => log.push(`abort ${e.name}`), { once: true });
-  return new Promise(() => {});
+  return new Promise((resolve) => {
+    downloads.set(e.name, resolve);
+    opts?.signal?.addEventListener("abort", () => { log.push(`abort ${e.name}`); resolve({ status: "aborted" }); }, { once: true });
+  });
 };
+export const SNAPSHOT_CACHE_DIR = "qed64-snapshots";
+export const isCacheKeyOf = () => true;
