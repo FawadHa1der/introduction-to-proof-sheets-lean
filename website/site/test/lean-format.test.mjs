@@ -29,6 +29,9 @@ test("every sheet parses into editor blocks with one input area per hole", async
   }
 });
 
-test("every sheet has a snapshot entry", () => {
+// The entries come from the bake plan (website/out/plan/entries.json): the plan lane of the full
+// build, or the fetch lane of the quick path, makes it.
+const planned = fs.existsSync(path.join(site, "../out/plan/entries.json"));
+test("every sheet has a snapshot entry", { skip: !planned && "no website/out/plan/entries.json yet (website/build.sh --prebuilt, or the full build)" }, () => {
   for (const s of index.lectures.flatMap((l) => l.sheets)) assert.match(s.entry ?? "", /^sheets-[0-9a-f]{10}$/, s.id);
 });

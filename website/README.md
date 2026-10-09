@@ -4,8 +4,7 @@ This folder turns the course's proof sheets into a website. Students open a shee
 [Waterproof editor](https://github.com/impermeable/waterproof-editor), write their proofs in the
 exercise holes, and Lean 4.34 checks them **in the browser tab**: no installation, no server.
 
-It is the *faithful* path of `../qed64/REPORT-2-website-2026-10-08.md`. Lean receives each sheet's
-Verso file itself (`#doc (WaterproofGenre) … =>`, Markdown prose, `::::multilean` exercises with
+It takes the *faithful* path: Lean receives each sheet's Verso file itself (`#doc (WaterproofGenre) … =>`, Markdown prose, `::::multilean` exercises with
 `:::input` holes), exactly as the VS Code extension sends it. It elaborates the file in the
 environment of exactly the sheet's imports, so a sheet's messages in the browser are native
 Lean's, message for message. The build checks that for every sheet (below).
@@ -24,8 +23,8 @@ Lean's, message for message. The build checks that for every sheet (below).
 
 | Path | What |
 |---|---|
-| `build.sh` | The whole build, in lanes (`--help`). |
-| `sources.json` | Every pin: the toolchain release, QED64, the forks (upstream commit + patches), the dependencies. |
+| `build.sh` | The whole build, in lanes (`--help`); `--prebuilt` for the quick path. |
+| `sources.json` | Every pin: the toolchain release, QED64, the prebuilt environments, the forks (upstream commit + patches), the dependencies. |
 | `patches/<fork>/` | The forks as patch series (`git format-patch`), applied by the `sources` lane. |
 | `forks/` | The fork checkouts (gitignored; each its own git repo, rebuilt from `patches/`). |
 | `scripts/compile.py` | Compiles the olean overlay with the release's native compiler (Docker). |
@@ -33,6 +32,7 @@ Lean's, message for message. The build checks that for every sheet (below).
 | `scripts/plan-entries.mjs` | One snapshot entry per distinct environment (ordered import closure). |
 | `scripts/browser-check.mjs` | One sheet through the browser's own FileWorker under Node, as the page runs it. |
 | `scripts/compare-checks.py` | Native versus browser (or 4.31 versus 4.34), message by message. |
+| `scripts/prebuilt.mjs`, `scripts/publish-prebuilt.sh` | The baked environments as a GitHub release, and the fetch lane that installs them. |
 | `expected/known-issues.json` | Course content issues that native Lean 4.31 has too (one, in L08). |
 | `test/fixtures/` | Sheet-shaped test files with exercises of their own (no course solutions). |
 | `site/` | The web page (Vite + TypeScript): editor, Lean client, InfoView, QED64 boot. |
@@ -70,7 +70,7 @@ Lean's, message for message. The build checks that for every sheet (below).
 | Every sheet natively on 4.34: errors only at the (empty) holes | `check-native` | 28/28 (L08's Example 4.3.4 fails on 4.31 too: `expected/known-issues.json`) |
 | Every sheet's messages on 4.34 = on native Lean 4.31 with the unported libraries | manual (recipe below) | 28/28 identical (severity, position, text) |
 | Every sheet through the browser's FileWorker = native 4.34, message by message | `bake` | 28/28 identical |
-| The page in a browser: boot, editing, hole status, goal panel, environment switch, saved work | manual (built-in browser pane) | passed, on the dev server and on the production build |
+| The page in a browser: boot, editing, hole status, goal panel, environment switch, saved work | manual (below) | passed, on the dev server and on the production build |
 
 Each snapshot holds the environment of one *ordered* import closure: Lean adds modules in a
 depth-first walk of the header, and some environment state depends on that order (Verbose's
@@ -99,38 +99,105 @@ The 4.31 baseline is native Lean 4.31 with the course's own (unported) libraries
 sheet text. To recreate it (about 8 GB; elan and Lake on the host):
 
 ```bash
-git worktree add --detach website/out/ref431 main
+git fetch origin main && git worktree add --detach website/out/ref431 FETCH_HEAD
 cp Bewijzen/Customlib/WeakInduction.lean website/out/ref431/Bewijzen/Customlib/
 cp Bewijzen/L08_Strong_Induction/sheet1_strong_induction.lean website/out/ref431/Bewijzen/L08_Strong_Induction/
 (cd website/out/ref431 && lake exe cache get && lake build WaterproofGenre Bewijzen.Customlib Bewijzen.Customlib.WeakInduction)
-python3 website/scripts/check-sheets.py --repo website/out/ref431 --lean ~/.elan/toolchains/leanprover--lean4---v4.31.0/bin/lean --lean-path "$(cd website/out/ref431 && lake env printenv LEAN_PATH)" --out website/out/check/native431 --opts=-Dpp.unicode.fun=true,-DautoImplicit=false,-DrelaxedAutoImplicit=false
+python3 website/scripts/check-sheets.py --repo website/out/ref431 --lean "$(cd website/out/ref431 && elan which lean)" --lean-path "$(cd website/out/ref431 && lake env printenv LEAN_PATH)" --out website/out/check/native431 --opts=-Dpp.unicode.fun=true,-DautoImplicit=false,-DrelaxedAutoImplicit=false
 python3 website/scripts/compare-checks.py website/out/check/native431 website/out/check/native434 --label-a 4.31 --label-b 4.34
 ```
 
-## Build
+## Requirements
 
-Requirements: Docker that runs `linux/arm64` (native on Apple silicon; elsewhere qemu), Node 24+,
-python3, git, and ~40 GB of disk for a first run.
+| | Quick path (`build.sh --prebuilt`) | Full build (`build.sh`) |
+|---|---|---|
+| Platform | macOS, Linux, or Windows with WSL2 | macOS on Apple silicon (verified end to end), Linux on arm64; x86_64 Linux, Intel Macs and WSL2 through arm64 emulation (slow) |
+| Tools | Node 24+, npm 10.8+, git, bash | the same, plus python3 3.9+, tar, and Docker that runs `linux/arm64` |
+| Disk | ~4 GB | ~40 GB at the peak (~14 GB in `out/` afterwards), on a filesystem with hard links |
+| Memory | a browser tab needs ~6 GB | 16 GB; the Docker VM 8 GB or more (`JOBS=1` below that) |
+| Network | ~3.7 GB from GitHub (the runtime, 150 MB; the environments, 3.5 GB) and ~90 MB from npm | ~3.3 GB from GitHub and npm, plus the Ubuntu image the compiler's Docker image is built from |
+| Time | minutes | about two hours on Apple silicon |
+
+Nothing needs an account or a key: the toolchain release, the forks' upstreams, the
+dependencies and QED64 are all public, and fetched over HTTPS by pinned commit or digest.
+
+- **The compiler is linux/arm64.** Docker Desktop runs it everywhere (emulated on x86_64). With
+  Docker Engine on x86_64 Linux, enable arm64 emulation once:
+  `docker run --privileged --rm tonistiigi/binfmt --install arm64`. Only the compile and
+  check-native lanes use Docker; emulated, they take several times longer.
+- **Linux, Docker Engine:** `scripts/in-docker.sh` runs the container as your user, so
+  `website/out` stays yours (`DOCKER_USER=0|1` overrides the choice). An `out/` made by an
+  earlier version of the script as root needs `sudo chown -R "$USER" website/out` once.
+- **Lake and VS Code** do not work on this branch: `lean-toolchain` is Lean 4.34, but
+  `lakefile.toml` still names the course's 4.31 libraries (the ported forks are patch series
+  here, not published packages). The website build does not use Lake. To work on the sheets in
+  VS Code, use the `main` branch.
+
+## Quick path: run the site without building it
+
+```bash
+git clone -b website-v4.34 https://github.com/FawadHa1der/introduction-to-proof-sheets-lean
+cd introduction-to-proof-sheets-lean
+website/build.sh --prebuilt
+npm --prefix website/site run dev
+```
+
+`--prebuilt` runs the lanes `release,fetch,site`: the Lean runtime from the toolchain release,
+the published environments (the snapshots and the plan that maps each sheet to its
+environment, each file checked against `prebuilt.json`, whose digest `sources.json` pins), and
+the page. These are the environments the full build made and checked, so the page behaves as
+after a full build of the same commit; `fetch` warns when this checkout's Customlib, patches or
+pins differ from the ones they were made from.
+
+The environments are published once per toolchain release and course change by
+`scripts/publish-prebuilt.sh` (after a full build; it needs `gh` logged in to the repository,
+uploads ~3.6 GB as a GitHub release and pins it in `sources.json`). **Until that has run,
+`--prebuilt` stops with a message, and the full build is the only way to get Lean in the page.**
+
+## Full build
 
 ```bash
 website/build.sh
 ```
 
-A first run takes about two hours: Docker compiles ~330 modules (~15 min), each of the 13
+The first run takes about two hours: Docker compiles ~330 modules (~15 min), each of the 13
 snapshot bakes takes ~6 minutes, and the browser check of the 28 sheets takes ~15 minutes.
-Re-runs skip what is up to date; `--lanes` picks lanes (`website/build.sh --help`).
+Re-runs skip what is up to date; `--lanes` picks lanes and `--plan` prints what would run
+(`website/build.sh --help`). Peak memory: ~12 GB for a browser check, ~9 GB for a bake.
 
 ## Run it locally
 
 ```bash
+npm --prefix website/site ci       # once; build.sh does it too
 npm --prefix website/site run dev
 ```
 
-Then open <http://localhost:5197/>. The dev server serves the runtime from
-`out/release/mirror/runtime` and the snapshots from `out/staging/snapshots`, with the COOP/COEP
-headers the page needs. `?sheet=<id>` opens a sheet, and `?fixture=hole-status` opens the
-hole-status test fixture (a solved, a wrong and an empty hole). `npm --prefix website/site run
-preview` serves the production build (`dist/`) on port 5207 in the same way.
+Then open <http://localhost:5197/>. The page itself works right after `npm ci`, but Lean needs
+the runtime (`out/release/mirror/runtime`) and the environments (`out/staging/snapshots`),
+which the full build or the quick path puts there (`RUNTIME_DIR` and `SNAPSHOTS_DIR` point the
+server elsewhere). The dev server sends the COOP/COEP headers the page needs. `?sheet=<id>`
+opens a sheet, and `?fixture=hole-status` opens the hole-status test fixture (a solved, a wrong
+and an empty hole). `npm --prefix website/site run preview` serves the production build
+(`dist/`) on port 5207 in the same way. The ports are fixed; `run dev -- --port <n>` picks
+another.
+
+The browser floor applies: a desktop Chrome or Edge 133+ or Firefox 134+, and ~6 GB for the tab.
+
+## Test
+
+```bash
+npm --prefix website/site test
+```
+
+The page's code without Lean: the Lean file format on every sheet, the text document, the edge
+Worker (seconds; the entry check is skipped before a plan exists). Lean's side is checked by the
+build: `check-native` (every sheet natively) and `bake` (every sheet through the browser's
+FileWorker, against native). In a browser, on the dev server:
+1. `?fixture=hole-status`: the three holes show green, red with Lean's error, and red;
+2. type a proof into the empty hole: it turns green;
+3. move the cursor into a proof: the goal panel follows;
+4. pick a sheet with other imports: Lean restarts on that sheet's environment;
+5. reload: the work is still there.
 
 ## Deploy
 
@@ -138,7 +205,9 @@ preview` serves the production build (`dist/`) on port 5207 in the same way.
 `proof-sheets/`), builds the page and deploys the Worker (`wrangler deploy`). It needs the
 Cloudflare account's rclone remote and a `wrangler login`. It refuses to deploy unless the
 toolchain release is already in the bucket under `lean4-wasm64/<release id>/`, where its owner
-uploads it once for every site on that release. `--dry-run` shows what it would upload.
+uploads it once for every site on that release. `--dry-run` shows what it would upload. The
+account, bucket and remote are the site owner's; anyone else deploys to their own account under
+their own names (`deploy.sh`, `wrangler.toml`).
 
 The browser downloads Lean once (160 MB) and then each environment it needs once
 (225–330 MB). It keeps the two most recent environments in its cache.
@@ -152,10 +221,12 @@ The browser downloads Lean once (160 MB) and then each environment it needs once
   run the lanes above. `check-native` and the browser comparison catch what the port missed.
 - **A new toolchain release**: change `sources.json` (release and QED64 pins) and run every lane.
   Snapshots are paired with one runtime build; they are always rebaked with it.
+- **After any rebake**, publish the environments again (`scripts/publish-prebuilt.sh`) so that
+  the quick path serves them; a sheet-text-only change needs no new publish.
 
 ## Requests to QED64 and the Lean fork
 
-Done in this site, and better done upstream (`../qed64/REPORT-2-website-2026-10-08.md` §7):
+Done in this site, and better done upstream:
 - **Lean options**: the site patches its staged copy of QED64's `lean.worker.js` to pass the
   course's lakefile `leanOptions` as `-D` flags (`site/scripts/stage.mjs`; the patch must apply
   exactly once). QED64 should take options per session.

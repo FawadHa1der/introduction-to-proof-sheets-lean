@@ -4,6 +4,14 @@
 
 Install the `Waterproof` extension in Visual Studio Code and open this folder using File -> Open Folder. Then open the worksheets in the Bewijzen/Lecture* folders.
 
+## In the browser (this branch)
+
+This branch, `website-v4.34`, also turns the sheets into a website: the Waterproof editor with
+Lean 4.34 running in the browser tab (WebAssembly), no installation. Everything about it,
+including how to build and run it locally, is in [website/README.md](website/README.md). On this
+branch the course is built by `website/build.sh`, not by Lake; for the Quickstart above (VS
+Code), use the `main` branch.
+
 ## About
 
 These exercise sheets are based on the book "An Infinite Descent into Pure Mathematics" by Clive Newstead. 

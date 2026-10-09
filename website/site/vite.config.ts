@@ -3,7 +3,7 @@
 // pre-bundled), and the Lean artifacts on the page's own origin. In development and preview the
 // artifacts come straight from the build's output, website/out: /runtime/ from the release
 // mirror and /snapshots/ from the bake staging. Production serves the same paths from the
-// edge (docs/DEPLOY.md in this folder).
+// edge (website/README.md, Deploy).
 import fs from "node:fs";
 import path from "node:path";
 import type { Connect, Plugin } from "vite";

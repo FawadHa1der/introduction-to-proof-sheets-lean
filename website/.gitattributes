@@ -1,0 +1,10 @@
+# The build runs these on every platform: keep them byte-exact (LF) on Windows checkouts too.
+*.sh text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.py text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+Dockerfile text eol=lf
+# git am applies them byte for byte.
+*.patch -text

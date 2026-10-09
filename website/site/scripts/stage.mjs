@@ -4,14 +4,14 @@
 // 1. public/workers/: QED64's five worker scripts, exactly closure.json's set (docs/EMBEDDING.md
 //    §6.1 step 3). lean.worker.js gets one edit: the course's lakefile `leanOptions` are appended
 //    to its `callMain(["--worker", …])` as -D flags. Native Lake passes them to Lean the same way;
-//    QED64 has no option channel yet (the request is in qed64/REPORT-2), so the staged copy
+//    QED64 has no option channel yet (website/README.md, Requests to QED64), so the staged copy
 //    carries them. The edit must apply exactly once or the stage fails.
 // 2. public/infoview/: @leanprover/infoview's dist (the InfoView ESM, its React builds, CSS).
 // 3. public/sheets/: the course's sheets, verbatim, and public/sheets/index.json, the catalogue
 //    (lectures, sheets, titles from `#doc`, exercise ids, imports, a content hash).
 //
 // The runtime and the snapshots are not staged: the dev and preview servers serve them from
-// website/out (vite.config.ts), and production serves them from the edge (docs/DEPLOY.md).
+// website/out (vite.config.ts), and production serves them from the edge (website/README.md, Deploy).
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
