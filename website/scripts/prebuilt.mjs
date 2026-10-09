@@ -98,9 +98,18 @@ async function pack() {
   const other = index.snapshots.filter((e) => e.runtime !== runtime);
   if (other.length) die(`snapshots not baked against ${runtime}: ${other.map((e) => e.name).join(", ")}`);
   const names = new Set(index.snapshots.map((e) => e.name));
+  // Every entry baked and browser-checked as things stand now: its markers hold the current
+  // fingerprints (scripts/fingerprint.mjs, with the options formatted as build.sh passes them).
+  const { fingerprints } = await import(pathToFileURL(path.join(W, "scripts/fingerprint.mjs")).href);
+  const { leanOptions } = await import(pathToFileURL(path.join(W, "site/scripts/stage.mjs")).href);
+  const opts = Object.entries(leanOptions()).map(([k, v]) => "-D" + k + "=" + v).join(",");
+  const current = new Map(fingerprints({ out, runtime, qed64, opts }).map((f) => [f.entry, f]));
+  const marker = (name, kind) => { try { return fs.readFileSync(path.join(out, "check/browser", `.${name}.${kind}`), "utf8").trim(); } catch { return null; } };
   for (const e of plan.entries) {
     if (!names.has(e.name)) die(`plan entry ${e.name} is not baked`);
-    if (!fs.existsSync(path.join(out, "check/browser", `.${e.name}.ok`))) die(`plan entry ${e.name}: its sheets were not browser-checked (the bake lane does it)`);
+    const f = current.get(e.name);
+    if (marker(e.name, "baked") !== f?.bake) die(`plan entry ${e.name}: its snapshot is not baked from the current overlay, runtime, QED64 and options (run the bake lane)`);
+    if (marker(e.name, "ok") !== f?.check) die(`plan entry ${e.name}: its sheets were not browser-checked as they are now (run the check-native and bake lanes)`);
   }
   if (!names.has("init")) die("no init snapshot");
   const missing = await unserved(plan);

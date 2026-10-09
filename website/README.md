@@ -38,6 +38,7 @@ restarts). This README is the reference: what is where, requirements, commands.
 | `scripts/plan-entries.mjs` | One snapshot entry per distinct environment (ordered import closure). |
 | `scripts/browser-check.mjs` | One sheet through the browser's own FileWorker under Node, as the page runs it. |
 | `scripts/compare-checks.py` | Native versus browser (or 4.31 versus 4.34), message by message. |
+| `scripts/fingerprint.mjs` | What each baked and checked entry depends on; the bake lane redoes an entry when it changes. |
 | `scripts/prebuilt.mjs`, `scripts/publish-prebuilt.sh` | The baked environments as a GitHub release, and the fetch lane that installs them. |
 | `expected/known-issues.json` | Course content issues that native Lean 4.31 has too (one, in L08). |
 | `test/fixtures/` | Sheet-shaped test files with exercises of their own (no course solutions). |
@@ -93,9 +94,10 @@ Measured on an Apple-silicon Mac (while other Lean jobs ran beside it):
 | Lean runtime, downloaded once | 160 MB |
 | One environment, downloaded once | 225–324 MB (0.83–1.15 GB in the browser's cache) |
 | All 13 environments plus `init` | 3.8 GB to host |
-| First visit to a sheet (cold cache, local server) | about 1 minute: runtime + environment download, compile, load |
-| Opening a sheet again (warm cache) | 10–30 s, most of it waiting for the previous tab's Lean to stop |
-| Switching to a sheet of another environment | a Lean restart (about 7 s, estimated from Node runs, not yet timed in a browser) plus checking the sheet; the first time, or after eviction, also downloading and inflating that environment (225–324 MB) (HOW-IT-WORKS.md §4); the same environment: checking only |
+| First visit to a sheet (cold cache, local server) | 18 s in headless Chromium (2026-10-09); about 1 minute in a desktop browser under load (2026-10-08) |
+| Opening a sheet again (warm cache) | 14 s (reload, headless); 10–30 s in a desktop browser, most of it waiting for the previous tab's Lean to stop |
+| Switching to a sheet of the same environment | 1.6 s (L04.1 → L04.2): no restart |
+| Switching to a sheet of another environment | 13.6–15.1 s: a Lean restart (~8 s) plus checking the sheet; over a network, a first visit to that environment also downloads 225–324 MB, starting at the switch (HOW-IT-WORKS.md §4) |
 | Checking a sheet once loaded (browser) | 4.7–13.8 s per sheet; natively, with the import, 6–15 s |
 | Browser tab memory, a sheet loaded and checked | 5.8 GB physical footprint with a 3,494-module environment, 6.0 GB with a 4,825-module one (macOS `footprint`; RSS 8.7–8.9 GB including reclaimable pages) |
 
@@ -122,10 +124,10 @@ python3 website/scripts/compare-checks.py website/out/check/native431 website/ou
 |---|---|---|
 | Platform | macOS, Linux, or Windows with WSL2 | macOS on Apple silicon (verified end to end), Linux on arm64; x86_64 Linux, Intel Macs and WSL2 through arm64 emulation (slow) |
 | Tools | Node 24+, npm 10.8+, git, bash, tar | the same, plus python3 3.9+ and Docker that runs `linux/arm64` |
-| Disk | ~4 GB | ~40 GB at the peak (~14 GB in `out/` afterwards), on a filesystem with hard links |
+| Disk | ~4 GB | ~16 GB in `out/` at the end of a full build (also its peak), on a filesystem with hard links; leave ~20 GB free for the Docker image and caches |
 | Memory | a browser tab needs ~6 GB | 16 GB; the Docker VM 8 GB or more (`JOBS=1` below that) |
 | Network | ~3.9 GB from GitHub (the runtime, 0.16 GB; the environments, 3.8 GB) and ~0.1 GB from npm | ~3.3 GB from GitHub and npm, plus the Ubuntu image the compiler's Docker image is built from |
-| Time | minutes | about two hours on Apple silicon |
+| Time | minutes | about two hours on Apple silicon (1 h 54 min measured from a fresh clone) |
 
 Nothing needs an account or a key: the toolchain release, the forks' upstreams, the
 dependencies and QED64 are all public, and fetched over HTTPS by pinned commit or digest.
@@ -175,8 +177,13 @@ in to the repository, uploads ~3.8 GB as a GitHub release and pins it in `source
 website/build.sh
 ```
 
-The first run takes about two hours: Docker compiles 284 modules (~15 min), each of the 13
-snapshot bakes takes ~6 minutes, and the browser check of the 28 sheets takes ~15 minutes.
+The first run takes about two hours (1 h 54 min from a fresh clone, 2026-10-09): the release
+~10 min, Docker compiles 284 modules (~10 min), the native check ~2 min, and the 14 snapshot
+bakes ~6 minutes each, with the browser check of the 28 sheets (~8 min) between them. Most of a
+bake is QED64's baker waiting 300 s for its process to exit (a request below). A fresh clone's
+build matches the author's: the same native messages, plan, compiled overlay and browser
+messages; 11 of the 14 snapshots are byte-identical, and 3 differ in about 35 bytes (baking is
+not byte-deterministic).
 Re-runs skip what is up to date; `--lanes` picks lanes and `--plan` prints what would run
 (`website/build.sh --help`). Peak memory: ~12 GB for a browser check, ~9 GB for a bake.
 
@@ -209,8 +216,9 @@ npm --prefix website/site test
 ```
 
 The page's code without Lean: the Lean file format on every sheet, the text document, the edge
-Worker, and the environment switching (`test/checker.test.mjs`, the Checker against a stand-in
-for QED64's relay) — seconds; the entry check is skipped before a plan exists. Lean's side is checked by the
+Worker, and the environment switching (`test/checker.test.mjs` against a stand-in relay,
+`test/checker-real-relay.test.mjs` against QED64's own) — seconds; the entry check is skipped
+before a plan exists. Lean's side is checked by the
 build: `check-native` (every sheet natively) and `bake` (every sheet through the browser's
 FileWorker, against native). In a browser, on the dev server:
 1. `?fixture=hole-status`: the three holes show green, red with Lean's error, and red;
@@ -235,10 +243,14 @@ The browser downloads Lean once (160 MB) and then each environment it needs once
 ## When the course changes
 
 - **Sheet text only** (most of the exporter's commits): rebuild the site (`--lanes site`); no
-  rebake. A sheet whose import list is new needs `--lanes plan,bake,site`.
+  rebake is needed. To hold the changed sheets against native Lean again, run
+  `--lanes check-native,bake,site`: the entries whose sheets changed are checked again, from
+  their staged snapshots, without a rebake. A sheet whose import list is new needs
+  `--lanes plan,bake,site`.
 - **Customlib, Verbose or the genre**: `--lanes compile,check-native,plan,bake,site`. The bake
-  lane notices the changed overlay (each entry's marker holds a fingerprint of the compiled
-  modules, the runtime, QED64 and the Lean options) and bakes and checks every entry again.
+  lane notices the change (each entry's markers hold fingerprints of the compiled modules, the
+  runtime, QED64 and the Lean options, and of its sheets' text and their native messages:
+  `scripts/fingerprint.mjs`) and bakes and checks the affected entries again.
 - **Upstream exports on Lean 4.31**: merge them into `website-v4.34`, port what 4.34 needs, and
   run the lanes above. `check-native` and the browser comparison catch what the port missed.
 - **A new toolchain release**: change `sources.json` (release and QED64 pins) and run every lane.
@@ -257,6 +269,21 @@ Done in this site, and better done upstream:
   modules apart.
 - **A headless FileWorker check**: `scripts/browser-check.mjs` is adapted from QED64's
   resident probe. It is worth a tier-1 tool in QED64.
+- **Replacing a session that is still starting**: a sheet chosen while Lean starts waits for that
+  start (QED64's relay accepts `restart()` only while serving), so two quick switches pay for
+  both starts (25 s instead of 15 s measured). The relay should replace a session in its settle
+  wait or before its environment is loaded.
+- **The bake's exit wait**: QED64's `bake-snapshot.mjs` waits 300 s for the baking process to go
+  quiet after the snapshot is written; that is ~70 of a full build's 114 minutes. Finishing once
+  the snapshot file is complete and stable would bring a full build to ~47 minutes.
+- **A stack overflow in a Lean thread**: in one of 14 browser boots, right after checking L07, a
+  Lean thread died with "Maximum call stack size exceeded" (the HARDENING #60 failure, on a
+  runtime that carries its fix); the page recovered 22 s later. The crash record says only
+  "Uncaught [object ErrorEvent]" and should carry the error text.
+- **Snapshot caching**: a stored region is recognised by its size and first bytes, not its
+  sha256; the browser's HTTP cache does not keep a 324 MB snapshot, so an evicted environment is
+  downloaded again; and since baking is not byte-deterministic, a rebake of an unchanged entry
+  gets a new name and is downloaded again.
 - **The Verbose overflow** shows that generic folds over the imported modules overflow the
   browser's JavaScript stack where native Lean does not. The fork's stack guard does not reach
   that path (it checks Lean's recursion, not core's compiled folds called back through

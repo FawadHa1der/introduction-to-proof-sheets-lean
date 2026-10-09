@@ -48,7 +48,7 @@
 #
 # Requirements (website/README.md has the details): Node 24+, git, and for the full build
 # python3, Docker that runs linux/arm64 (native on Apple silicon and arm64 Linux; emulated
-# elsewhere), 16 GB of memory and ~40 GB of free disk. The quick path needs Node and ~4 GB.
+# elsewhere), 16 GB of memory and ~20 GB of free disk. The quick path needs Node and ~4 GB.
 set -euo pipefail
 
 W="$(cd "$(dirname "$0")" && pwd)"
@@ -183,18 +183,10 @@ lane_sources() {
 
 # ------------------------------------------------------------------------------- release --
 # Each unpacked piece carries a stamp with the release id, so a release change replaces it. A
-# piece made before stamps had ids (no stamp, or an empty one) is this release's only if the
-# mirror's release record, from the run that made it, says so: then it gets its stamp.
-LEGACY_RID=""
-stamped() { # stamped <stamp file> <piece present?>
-  [ "$2" = 1 ] || return 1
-  if [ -s "$1" ]; then [ "$(cat "$1")" = "$RID" ]; return; fi
-  [ "$LEGACY_RID" = "$RID" ] || return 1
-  [ "$PLAN" = 1 ] || echo "$RID" > "$1"
-}
+# piece without one (made before stamps had ids, or by an interrupted run) is fetched again.
+stamped() { [ "$2" = 1 ] && [ -s "$1" ] && [ "$(cat "$1")" = "$RID" ]; } # stamped <stamp file> <piece present?>
 lane_release() {
   local mirror="$OUT/release/mirror" toolchain=0 l
-  LEGACY_RID="$(node -p 'require(process.argv[1]).id' "$mirror/release.json" 2>/dev/null || true)"
   # The native compiler and the packs when a later lane compiles, checks or plans, or when the
   # release lane runs without any later lane (fetching the whole release); not for the quick
   # path or for a bake or a site build on top of an earlier full build.
@@ -302,37 +294,6 @@ bake() { # bake <name> <probe source> [extra bake-snapshot flags...]
   run node --stack-size=8192 "$QED64_DIR/pipeline/snapshot/bake-snapshot.mjs" --name "$name" --probe "$probe" \
     --artifact "$ART" --lib "$OUT/bake-tree" --work "$OUT/bake-work" --out "$OUT/staging/snapshots" "$@"
 }
-# What a baked and checked entry depends on besides its imports' names: the compiled overlay's
-# contents (out/build/lib, and the Mathlib modules compiled into out/build/fill, which are not
-# hard links into the packs), the runtime, the QED64 pin and the Lean options. An entry's
-# out/check/browser/.<name>.ok holds this fingerprint; another one means bake and check again.
-overlay_fingerprint() {
-  node -e '
-    const fs = require("fs"), path = require("path"), crypto = require("crypto");
-    const [lib, fill, fat, ...pins] = process.argv.slice(1);
-    const files = [];
-    const walk = (root, dir, keep) => {
-      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-        const p = path.join(dir, e.name);
-        if (e.isDirectory()) walk(root, p, keep);
-        else if (e.name.endsWith(".olean") && keep(p, path.relative(root, p))) files.push([path.relative(root, p), crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex")]);
-      }
-    };
-    walk(lib, lib, () => true);
-    const ino = (p) => { try { return fs.statSync(p).ino; } catch { return -1; } };
-    if (fs.existsSync(fill)) walk(fill, fill, (p, rel) => ino(path.join(fat, rel)) !== fs.statSync(p).ino);
-    files.sort((a, b) => (a[0] < b[0] ? -1 : 1));
-    console.log(crypto.createHash("sha256").update(JSON.stringify({ files, pins })).digest("hex"));
-  ' "$OUT/build/lib" "$OUT/build/fill" "$OUT/trees/fat" "$RUNTIME" "$QED64_PIN" "$LEAN_OPTS_CSV"
-}
-# checked <name> <fingerprint>: its marker holds this fingerprint. A marker from before
-# fingerprints (empty) is taken as this one, once.
-checked() {
-  local ok="$OUT/check/browser/.$1.ok"
-  [ -f "$ok" ] || return 1
-  if [ -s "$ok" ]; then [ "$(cat "$ok")" = "$2" ]; return; fi
-  echo "$2" > "$ok"
-}
 # baked <name>: the staged index has <name>, paired with this runtime.
 baked() { node -e 'process.exit(require(process.argv[1]).snapshots.some((e) => e.name === process.argv[2] && e.runtime === process.argv[3]) ? 0 : 1)' "$OUT/staging/snapshots/index.json" "$1" "$RUNTIME" 2>/dev/null; }
 lane_bake() {
@@ -350,18 +311,35 @@ lane_bake() {
     bake init "#check (2 + 2 : Nat)"
   fi
   [ "$PLAN" = 1 ] && { note "then, per entry of $plan: bake, browser-check its sheets against out/check/native434, delete the raw region"; return 0; }
-  local fp; fp="$(overlay_fingerprint)"
+  # Two markers per entry hold what its bake and its check depended on (scripts/fingerprint.mjs):
+  # .<entry>.baked the compiled overlay, runtime, QED64 and options; .<entry>.ok that, the staged
+  # snapshot, its sheets' text and native messages. A sheet edit re-checks without a rebake.
+  fingerprint() { node "$W/scripts/fingerprint.mjs" --out "$OUT" --runtime "$RUNTIME" --qed64 "$QED64_PIN" --opts "$LEAN_OPTS_CSV" --entry "$1" | cut -f"$2"; }
+  # inflate <name>: the staged snapshot back into bake-work/<name>.snap, for a check without a bake.
+  inflate() {
+    local file; file="$(node -p 'require("path").basename(require(process.argv[1]).snapshots.find((e) => e.name === process.argv[2]).url)' "$OUT/staging/snapshots/index.json" "$1")"
+    gunzip -c "$OUT/staging/snapshots/$file" > "$OUT/bake-work/$1.snap.tmp" && mv "$OUT/bake-work/$1.snap.tmp" "$OUT/bake-work/$1.snap"
+  }
   local opts=() o=() x; [ -z "$LEAN_OPTS_CSV" ] || IFS=, read -r -a o <<< "$LEAN_OPTS_CSV"
   for x in ${o[@]+"${o[@]}"}; do opts+=(--opt "${x#-D}"); done
   node -e 'for (const e of require(process.argv[1]).entries) console.log([e.name, e.imports.join(" "), e.roots.join(","), e.label, e.sheets.join(" ")].join("\t"))' "$plan" |
   while IFS=$'\t' read -r name imports roots label sheets; do
-    if baked "$name" && checked "$name" "$fp"; then
-      note "$name: baked and checked already"; continue
+    local bake_fp; bake_fp="$(fingerprint "$name" 2)"
+    if baked "$name" && [ "$(cat "$OUT/check/browser/.$name.baked" 2>/dev/null)" = "$bake_fp" ]; then
+      if [ "$(cat "$OUT/check/browser/.$name.ok" 2>/dev/null)" = "$(fingerprint "$name" 3)" ]; then
+        note "$name: baked and checked already"; continue
+      fi
+      note "$name: baked already; its sheets or their native messages changed: checking again"
+      [ -f "$OUT/bake-work/$name.snap" ] || inflate "$name"
+    else
+      note "$name: $label — imports $imports"
+      rm -f "$OUT/check/browser/.$name.ok"
+      bake "$name" "$(printf 'import %s\n' $imports)#check (2 + 2 : Nat)" --roots "$roots" --label "$label" --allow-legacy-imports \
+        > "$OUT/logs/bake-$name.log" 2>&1 || { tail -20 "$OUT/logs/bake-$name.log"; die "bake of $name failed"; }
+      grep -E "^baked " "$OUT/logs/bake-$name.log" | sed 's/^/   /'
+      echo "$bake_fp" > "$OUT/check/browser/.$name.baked"
     fi
-    note "$name: $label — imports $imports"
-    bake "$name" "$(printf 'import %s\n' $imports)#check (2 + 2 : Nat)" --roots "$roots" --label "$label" --allow-legacy-imports \
-      > "$OUT/logs/bake-$name.log" 2>&1 || { tail -20 "$OUT/logs/bake-$name.log"; die "bake of $name failed"; }
-    grep -E "^baked " "$OUT/logs/bake-$name.log" | sed 's/^/   /'
+    [ -f "$OUT/bake-work/init.snap" ] || inflate init
     local s ok=1
     for s in $sheets; do
       local file; file="$REPO/Bewijzen/$(echo "$s" | sed 's#\.#/#').lean"
@@ -378,7 +356,7 @@ lane_bake() {
       fi
     done
     [ "$ok" = 1 ] || die "$name: a sheet's browser messages differ from native Lean's (logs above)"
-    echo "$fp" > "$OUT/check/browser/.$name.ok"
+    fingerprint "$name" 3 > "$OUT/check/browser/.$name.ok"
     [ "${KEEP_RAW:-0}" = 1 ] || rm -f "$OUT/bake-work/$name.snap" "$OUT/bake-work/$name.snap.deps"
   done
 }

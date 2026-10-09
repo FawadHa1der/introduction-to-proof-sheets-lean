@@ -63,9 +63,13 @@ first: the snapshot of a file with no imports (Lean's `Init` library alone; 33 M
 
 `website/build.sh` runs these lanes in order. `sources`, `release`, `compile` and `bake` (and
 `fetch` on the quick path) skip work already done; `check-native`, `plan` and `site` run in
-full every time. `bake` bakes and checks an entry again whenever the compiled overlay, the
-runtime, the QED64 pin or the Lean options changed: each entry's marker
-(`out/check/browser/.<entry>.ok`) holds a fingerprint of them.
+full every time. `bake` bakes an entry again whenever the compiled overlay, the runtime, the
+QED64 pin or the Lean options changed, and checks it again whenever, in addition, the text of
+one of its sheets or native Lean's messages for one changed; a re-check alone inflates the
+staged snapshot instead of rebaking it (a rebake renames the snapshot, since baking is not
+byte-deterministic, and every student would download it again). The two markers,
+`out/check/browser/.<entry>.baked` and `.<entry>.ok`, hold the fingerprints
+(`scripts/fingerprint.mjs`).
 
 | Lane | What it does | Why |
 |---|---|---|
@@ -76,6 +80,13 @@ runtime, the QED64 pin or the Lean options changed: each entry's marker
 | `plan` | Assembles the bake tree (slim packs + overlay) and groups the sheets by ordered import closure (`scripts/plan-entries.mjs` → `out/plan/entries.json`): 13 entries, each baked from its group's shortest import list. | One environment per distinct closure (section 1). |
 | `bake` | For `init` and every entry: QED64's `bake-snapshot.mjs` runs the WebAssembly runtime under Node, imports the entry's header, and writes the snapshot (`out/staging/snapshots/<name>.<digest>.snapz`, gzip; each entry 225–324 MB, 0.83–1.15 GB inflated) and its line in `index.json`. Then every sheet of the entry is elaborated **by the browser's own FileWorker under Node, in that snapshot** (`scripts/browser-check.mjs`), and its messages must equal native Lean's, message for message (`scripts/compare-checks.py`). | The browser's Lean must say what native Lean says. A sheet that differs stops the build. |
 | `site` | Stages QED64's worker scripts (with the course's Lean options added to the FileWorker's command line), the InfoView, and the sheets with their catalogue (`site/scripts/stage.mjs`: title, exercises, imports, content hash, entry), type-checks, and builds the page with Vite. | |
+
+From a fresh clone (2026-10-09, Apple silicon) the lanes took: `sources` 23 s, `release`
+9.5 min, `compile` 9.5 min, `check-native` 2 min, `plan` 7 s, `bake` 92 min (about 70 of them
+QED64's baker waiting 300 s per snapshot for its process to exit), `site` 3 s: 1 h 54 min. The
+result matched the author's build: the same native messages, plan, compiled overlay and browser
+messages, and 11 of the 14 snapshots byte for byte (the other 3 differ in about 35 bytes:
+baking is not byte-deterministic).
 
 A third check is run by hand, not by `build.sh` (`README.md`, the 4.31 baseline): every
 sheet's messages on 4.34 equal native Lean 4.31's with the course's original libraries. All
@@ -165,10 +176,10 @@ check.
 ### Same environment: no restart
 
 If the next sheet's entry is the one Lean is running (L04.1 → L04.2, or L05.1 → L06.3), the
-page sends the new text to the same FileWorker. Lean keeps the environment and elaborates the
-new text: 4.7–13.8 s per sheet (measured under Node). The squiggles clear, and every hole shows
-as incorrect (red) until Lean has finished checking the new text, so it can look like a
-restart, but no Lean is started.
+page sends the new text to the same FileWorker. Lean keeps the environment (and the processed
+header, when the import lines are the same) and elaborates the new text: 1.6 s from the
+selection to "Checked" for L04.1 → L04.2 in a browser. The squiggles clear, and every hole
+shows as incorrect (red) until Lean has finished checking the new text, but no Lean is started.
 
 ### Another environment: Lean restarts
 
@@ -194,16 +205,22 @@ OPFS.
 
 Two things make this cheaper:
 - **The download starts at the switch.** If the new environment is not in OPFS yet, the Checker
-  starts its download and inflation the moment the sheet is chosen (QED64's `prefetchRaw`),
-  while the old Lean stops and the new runtime starts, instead of after. The new Lean's boot
-  joins that download.
+  starts its download and inflation the moment it restarts Lean (QED64's `prefetchRaw`), while
+  the old Lean stops and the new runtime starts, instead of after. The new Lean's boot joins
+  that download. In a browser on a local server the request went out within 0.2 s of the
+  selection and was done before the new runtime needed it, so a switch to an environment never
+  seen before took no longer than one to a cached environment. A switch made while Lean is
+  still starting starts no download (that start is downloading its own environment); the new
+  target's starts with the restart onto it. So at most one download runs at a time.
 - **The cache keeps recent environments.** Each time a Lean starts (the first start, a switch,
-  a restart after a crash), the page deletes from OPFS the inflated region of every environment
-  except that Lean's, the one started before it (remembered across visits), the open sheet's if
-  different, and `init`, since each takes about 1 GB of the student's disk. So at most two
+  a restart after a crash), the page deletes from OPFS the inflated region (and any partial one
+  a stopped download left) of every environment except that Lean's, the one started before it
+  (remembered across visits), the open sheet's if different, the one being downloaded, and
+  `init`, since each takes about 1 GB of the student's disk. Regions of snapshots the site no
+  longer names (after a rebake or a new release renamed them) are deleted once per page. So at most two
   environments stay cached (up to about 2.4 GB with `init`); a third can exist for a while when
   a sheet is switched while Lean is still starting. Going back to an evicted environment
-  downloads it again.
+  downloads it again: the browser's HTTP cache did not keep a 324 MB snapshot.
 
 ### Switching while Lean is starting
 
@@ -214,7 +231,10 @@ anything is checked), the Checker compares the two; if they differ, it restarts 
 target. So a switch made while Lean is still starting waits for that start, then restarts once,
 onto the last sheet chosen; switching back to the environment that is starting cancels the
 pending restart; and typing in the new sheet neither loses nor repeats it. (Each of these was a
-bug before 2fa58f5; `site/test/checker.test.mjs` covers them.)
+bug before 2fa58f5; `site/test/checker.test.mjs` and `checker-real-relay.test.mjs`, which uses
+QED64's own relay, cover them.) The cost: a second choice made while Lean starts still pays for
+the first one's start (two quick "Next" clicks took 25 s instead of 15 s in a browser), because
+QED64's relay cannot replace a session that is still starting.
 
 The Checker reads the import lines again on every edit, not only on a switch. So an uploaded
 file, or a teacher's edit of the imports, restarts Lean whenever its import list maps to
@@ -222,26 +242,41 @@ another entry. An import list no sheet has gets QED64's fallback (section 3, ste
 retyping a module name can restart Lean once while the name is incomplete and again when it is
 finished.
 
-If Lean crashes, QED64 restarts it on the open sheet's environment, after the same 1.5 s
-settle. After three crashes (or failed starts) within two minutes it stops, and the page says
-so. Opening another sheet does not start it again; the next edit, or a reload, does.
+If Lean crashes, QED64 restarts it, after the same 1.5 s settle, and the Checker makes that new
+Lean boot the open sheet's environment (not the one the relay remembers from the last switch,
+which the student may have left). After three crashes (or failed starts) within two minutes it
+stops, and the page says so; opening another sheet, editing, or a reload starts it again. (In
+one of 14 browser boots, a Lean thread overflowed its stack right after checking L07, and the
+page recovered by itself 22 s later; this is reported to QED64.)
 
 ### What a switch costs
 
-| Switch | Lean restarts? | Time to checked |
-|---|---|---|
-| Same environment | no | elaboration only: 4.7–13.8 s per sheet |
-| Other environment, in OPFS | yes | restart (~7 s, estimated) + elaboration: ~12–21 s, not yet timed in a browser |
-| Other environment, first time (or evicted) | yes | the above, plus whatever part of downloading 225–324 MB and inflating it to 0.83–1.15 GB in OPFS the restart does not hide (the download starts at the switch). The download alone takes ~18–26 s at 100 Mbit/s and ~3–4.3 min at 10 Mbit/s; the inflation and the OPFS write have not been measured |
-| First visit | — | runtime (160 MB) + environment download, then as above: about 1 minute on a local server |
+Measured in a browser (headless Chromium 151, the dev server on the same machine, so downloads
+are much faster than over a network; the machine was busy with other work), from the selection
+to "Checked":
 
-Walking the catalogue in order, 18 of the 27 steps change environment. The switch times above
-are estimates, because no switch has been timed in a browser yet. They add the browser's 1.5 s
-settle to phases measured under Node with the browser's FileWorker (`out/logs/browser-*.log`,
-medians): runtime start to `init` loaded ~3.5 s, entry region load ~2.2 s, elaboration
-4.7–13.8 s. In the browser, a restart also fetches the runtime from the HTTP cache and checks
-its sha256 again, and may wait for the old Lean's Workers, so real switches take longer. The
-nearest browser figure, reopening a sheet with a warm cache, is 10–30 s (`README.md`).
+| Switch | Lean restarts? | Time | Downloaded |
+|---|---|---|---|
+| First visit (nothing cached) | — | 17.7 s | 523 MB (runtime + environment) |
+| Same environment (L04.1 → L04.2) | no | 1.6 s | nothing |
+| Another environment, never seen | yes | 14.9 s | 324 MB, during the restart |
+| Another environment, cached | yes | 13.6–15.1 s | nothing |
+| Back to an evicted environment | yes | 14.0 s | 324 MB again |
+| Reload, everything cached | — | 14.0 s | nothing |
+
+Walking the catalogue in order, 18 of the 27 steps change environment. A restart's 14 s go to:
+
+| Phase | Time |
+|---|---|
+| The 1.5 s settle, the wait for the old Lean (0–0.5 s), and the runtime from the HTTP cache | 1.9–2.1 s |
+| Starting the new runtime | 3.4–4.3 s |
+| Loading `init` | 0.1 s |
+| Loading the ~1 GB environment from OPFS, until Lean serves | 2.2–3.2 s |
+| Checking the sheet | 5.7–6.6 s (13 s for L07) |
+
+Over a real network, a first visit and a switch to an environment not yet cached add the part of
+the 225–324 MB download that the restart does not hide: the download starts at the switch, and
+the new Lean needs it about 6 s later. At 100 Mbit/s it takes 18–26 s, at 10 Mbit/s 3–4.3 min.
 
 ## 5. Why not fewer environments
 
