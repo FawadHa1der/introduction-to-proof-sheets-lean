@@ -302,6 +302,37 @@ bake() { # bake <name> <probe source> [extra bake-snapshot flags...]
   run node --stack-size=8192 "$QED64_DIR/pipeline/snapshot/bake-snapshot.mjs" --name "$name" --probe "$probe" \
     --artifact "$ART" --lib "$OUT/bake-tree" --work "$OUT/bake-work" --out "$OUT/staging/snapshots" "$@"
 }
+# What a baked and checked entry depends on besides its imports' names: the compiled overlay's
+# contents (out/build/lib, and the Mathlib modules compiled into out/build/fill, which are not
+# hard links into the packs), the runtime, the QED64 pin and the Lean options. An entry's
+# out/check/browser/.<name>.ok holds this fingerprint; another one means bake and check again.
+overlay_fingerprint() {
+  node -e '
+    const fs = require("fs"), path = require("path"), crypto = require("crypto");
+    const [lib, fill, fat, ...pins] = process.argv.slice(1);
+    const files = [];
+    const walk = (root, dir, keep) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(root, p, keep);
+        else if (e.name.endsWith(".olean") && keep(p, path.relative(root, p))) files.push([path.relative(root, p), crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex")]);
+      }
+    };
+    walk(lib, lib, () => true);
+    const ino = (p) => { try { return fs.statSync(p).ino; } catch { return -1; } };
+    if (fs.existsSync(fill)) walk(fill, fill, (p, rel) => ino(path.join(fat, rel)) !== fs.statSync(p).ino);
+    files.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    console.log(crypto.createHash("sha256").update(JSON.stringify({ files, pins })).digest("hex"));
+  ' "$OUT/build/lib" "$OUT/build/fill" "$OUT/trees/fat" "$RUNTIME" "$QED64_PIN" "$LEAN_OPTS_CSV"
+}
+# checked <name> <fingerprint>: its marker holds this fingerprint. A marker from before
+# fingerprints (empty) is taken as this one, once.
+checked() {
+  local ok="$OUT/check/browser/.$1.ok"
+  [ -f "$ok" ] || return 1
+  if [ -s "$ok" ]; then [ "$(cat "$ok")" = "$2" ]; return; fi
+  echo "$2" > "$ok"
+}
 # baked <name>: the staged index has <name>, paired with this runtime.
 baked() { node -e 'process.exit(require(process.argv[1]).snapshots.some((e) => e.name === process.argv[2] && e.runtime === process.argv[3]) ? 0 : 1)' "$OUT/staging/snapshots/index.json" "$1" "$RUNTIME" 2>/dev/null; }
 lane_bake() {
@@ -319,11 +350,12 @@ lane_bake() {
     bake init "#check (2 + 2 : Nat)"
   fi
   [ "$PLAN" = 1 ] && { note "then, per entry of $plan: bake, browser-check its sheets against out/check/native434, delete the raw region"; return 0; }
+  local fp; fp="$(overlay_fingerprint)"
   local opts=() o=() x; [ -z "$LEAN_OPTS_CSV" ] || IFS=, read -r -a o <<< "$LEAN_OPTS_CSV"
   for x in ${o[@]+"${o[@]}"}; do opts+=(--opt "${x#-D}"); done
   node -e 'for (const e of require(process.argv[1]).entries) console.log([e.name, e.imports.join(" "), e.roots.join(","), e.label, e.sheets.join(" ")].join("\t"))' "$plan" |
   while IFS=$'\t' read -r name imports roots label sheets; do
-    if baked "$name" && [ -f "$OUT/check/browser/.$name.ok" ]; then
+    if baked "$name" && checked "$name" "$fp"; then
       note "$name: baked and checked already"; continue
     fi
     note "$name: $label — imports $imports"
@@ -346,7 +378,7 @@ lane_bake() {
       fi
     done
     [ "$ok" = 1 ] || die "$name: a sheet's browser messages differ from native Lean's (logs above)"
-    touch "$OUT/check/browser/.$name.ok"
+    echo "$fp" > "$OUT/check/browser/.$name.ok"
     [ "${KEEP_RAW:-0}" = 1 ] || rm -f "$OUT/bake-work/$name.snap" "$OUT/bake-work/$name.snap.deps"
   done
 }
