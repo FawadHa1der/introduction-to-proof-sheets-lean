@@ -26,6 +26,13 @@ function isolate(_req: Connect.IncomingMessage, res: import("node:http").ServerR
 /** /runtime/* and /snapshots/* from the build output: identity encoding, byte ranges, 404s. */
 function artifacts(req: Connect.IncomingMessage, res: import("node:http").ServerResponse, next: Connect.NextFunction) {
   const url = (req.url ?? "").split("?")[0];
+  if (url.startsWith("/profiles/")) {
+    // The course boots from snapshots only (no library packs): every profile path is a 404, as
+    // in production, never the page's index.html.
+    res.statusCode = 404;
+    res.end("not found");
+    return;
+  }
   const prefix = Object.keys(ARTIFACT_DIRS).find((p) => url.startsWith(p));
   if (!prefix) return next();
   const root = ARTIFACT_DIRS[prefix];
@@ -64,8 +71,19 @@ const serveForQed64: Plugin = {
 
 export default defineConfig({
   plugins: [serveForQed64],
-  optimizeDeps: { exclude: ["qed64"] },
+  optimizeDeps: {
+    exclude: ["qed64"],
+    // One pre-bundling pass for everything that shares CodeMirror, so the editor and the Verbose
+    // language (vendored source, src/lean-format/codemirror-lang-verbose) see one
+    // @codemirror/state; two copies make CodeMirror refuse the language's extensions.
+    include: [
+      "@impermeable/waterproof-editor", "@lezer/highlight",
+      "@codemirror/state", "@codemirror/view", "@codemirror/language", "@codemirror/autocomplete",
+      "@codemirror/commands", "@codemirror/lint",
+      "vscode-jsonrpc/browser", "@leanprover/infoview/loader", "@leanprover/infoview-api",
+    ],
+  },
   build: { target: "es2022", chunkSizeWarningLimit: 4096 },
   server: { port: 5197, strictPort: true, watch: { ignored: ["**/out/**"] } },
-  preview: { port: 5198, strictPort: true },
+  preview: { port: 5207, strictPort: true },
 });

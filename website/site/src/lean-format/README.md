@@ -14,3 +14,9 @@ These files are copied verbatim from impermeable/waterproof-vscode at commit
 They are LGPL-2.1-only, as waterproof-vscode is (see its LICENSE). They are what the
 Waterproof VS Code extension uses to turn a Verso proof sheet into editor blocks and back; the
 website reuses them so that a sheet looks and edits exactly as it does in the extension.
+
+Also vendored: `codemirror-lang-verbose/` (`src/index.ts`, `src/tokenizer.ts`, LICENSE: MIT) from
+impermeable/codemirror-lang-verbose at e785936aaa3a607c09a8b4f5a41a4cecf8e07cd9, the commit
+waterproof-vscode locks. The package ships only a CommonJS bundle, and Vite's dev pre-bundler
+gave that bundle its own copy of CodeMirror, which CodeMirror refuses; the two source files
+import the site's one copy.

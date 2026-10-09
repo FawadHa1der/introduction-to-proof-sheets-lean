@@ -12,7 +12,7 @@ import {
   type WaterproofEditorConfig,
   type WrappingDocChange,
 } from "@impermeable/waterproof-editor";
-import * as langVerbose from "@impermeable/codemirror-lang-verbose";
+import * as langVerbose from "./lean-format/codemirror-lang-verbose";
 import leanTactics from "./lean-format/tacticsLean.json";
 import symbols from "./lean-format/symbols-lean.json";
 import { topLevelBlocksLean } from "./lean-format/document-construction/construct-document";
@@ -328,6 +328,11 @@ async function main(): Promise<void> {
   addEventListener("pagehide", () => store.saveSheet(sheet.id, doc.getText(), sheet.sha256));
 
   await startLean(doc.getText());
+}
+
+if (import.meta.env.DEV) {
+  // a handle for the browser checks (development builds only)
+  Object.assign(globalThis, { __proofsheets: { get doc() { return doc; }, get client() { return client; }, get checker() { return checker; }, get cursor() { return cursorOffset; }, editor, infoview } });
 }
 
 void main().catch((e) => {
