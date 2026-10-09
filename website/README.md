@@ -65,21 +65,46 @@ Lean's, message for message. The build checks that for every sheet (below).
 
 ## Faithfulness, and how it is checked
 
-| Check | Lane | Result |
+| Check | Lane | Result (2026-10-08) |
 |---|---|---|
 | Every sheet natively on 4.34: errors only at the (empty) holes | `check-native` | 28/28 (L08's Example 4.3.4 fails on 4.31 too: `expected/known-issues.json`) |
-| Every sheet's messages on 4.34 = on native Lean 4.31 with the unported libraries | manual (`out/ref431`) | 28/28 identical |
-| Every sheet through the browser's FileWorker = native 4.34, message by message | `bake` | per entry, before its raw region is dropped |
+| Every sheet's messages on 4.34 = on native Lean 4.31 with the unported libraries | manual (recipe below) | 28/28 identical (severity, position, text) |
+| Every sheet through the browser's FileWorker = native 4.34, message by message | `bake` | 28/28 identical |
+| The page in a browser: boot, editing, hole status, goal panel, environment switch, saved work | manual (built-in browser pane) | passed, on the dev server and on the production build |
 
 Each snapshot holds the environment of one *ordered* import closure: Lean adds modules in a
 depth-first walk of the header, and some environment state depends on that order (Verbose's
 configuration is the last module's). The 28 sheets need 13 such environments. The page boots
 the entry baked for exactly the open sheet's imports, never a larger one, and restarts Lean when
-the next sheet needs another entry.
+the next sheet needs another entry (QED64 reports the header as `exact`).
+
+Measured on an Apple-silicon Mac (while other Lean jobs ran beside it):
+
+| | |
+|---|---|
+| Lean runtime, downloaded once | 160 MB |
+| One environment, downloaded once | 225–324 MB (0.83–1.15 GB in the browser's cache) |
+| All 13 environments plus `init` | 3.8 GB to host |
+| First visit to a sheet (cold cache, local server) | about 1 minute: runtime + environment download, compile, load |
+| Opening a sheet again (warm cache) | 10–30 s, most of it waiting for the previous tab's Lean to stop |
+| Checking a sheet once loaded (browser) | 4.7–13.8 s per sheet; natively, with the import, 6–15 s |
+| Browser tab memory, a 3,495-module environment loaded and checked | 4.1 GB resident |
 
 The browser floor is a hard requirement for students: a desktop Chrome or Edge 133+ or Firefox
-134+ (WebAssembly Memory64), cross-origin isolation, and about 8 GB of free memory. The page
-says so and still shows the sheet when the browser cannot run Lean.
+134+ (WebAssembly Memory64), cross-origin isolation, and about 8 GB of memory (the tab needs 4–5
+GB). The page says so and still shows the sheet when the browser cannot run Lean.
+
+The 4.31 baseline is native Lean 4.31 with the course's own (unported) libraries, on the same
+sheet text. To recreate it (about 8 GB; elan and Lake on the host):
+
+```bash
+git worktree add --detach website/out/ref431 main
+cp Bewijzen/Customlib/WeakInduction.lean website/out/ref431/Bewijzen/Customlib/
+cp Bewijzen/L08_Strong_Induction/sheet1_strong_induction.lean website/out/ref431/Bewijzen/L08_Strong_Induction/
+(cd website/out/ref431 && lake exe cache get && lake build WaterproofGenre Bewijzen.Customlib Bewijzen.Customlib.WeakInduction)
+python3 website/scripts/check-sheets.py --repo website/out/ref431 --lean ~/.elan/toolchains/leanprover--lean4---v4.31.0/bin/lean --lean-path "$(cd website/out/ref431 && lake env printenv LEAN_PATH)" --out website/out/check/native431 --opts=-Dpp.unicode.fun=true,-DautoImplicit=false,-DrelaxedAutoImplicit=false
+python3 website/scripts/compare-checks.py website/out/check/native431 website/out/check/native434 --label-a 4.31 --label-b 4.34
+```
 
 ## Build
 
@@ -104,7 +129,7 @@ Then open <http://localhost:5197/>. The dev server serves the runtime from
 `out/release/mirror/runtime` and the snapshots from `out/staging/snapshots`, with the COOP/COEP
 headers the page needs. `?sheet=<id>` opens a sheet, and `?fixture=hole-status` opens the
 hole-status test fixture (a solved, a wrong and an empty hole). `npm --prefix website/site run
-preview` serves the production build (`dist/`) on port 5198 in the same way.
+preview` serves the production build (`dist/`) on port 5207 in the same way.
 
 ## Deploy
 
