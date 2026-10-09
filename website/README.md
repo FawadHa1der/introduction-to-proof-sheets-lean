@@ -88,11 +88,12 @@ Measured on an Apple-silicon Mac (while other Lean jobs ran beside it):
 | First visit to a sheet (cold cache, local server) | about 1 minute: runtime + environment download, compile, load |
 | Opening a sheet again (warm cache) | 10–30 s, most of it waiting for the previous tab's Lean to stop |
 | Checking a sheet once loaded (browser) | 4.7–13.8 s per sheet; natively, with the import, 6–15 s |
-| Browser tab memory, a 3,495-module environment loaded and checked | 4.1 GB resident |
+| Browser tab memory, a sheet loaded and checked | 5.8 GB physical footprint with a 3,494-module environment, 6.0 GB with a 4,825-module one (macOS `footprint`; RSS 8.7–8.9 GB including reclaimable pages) |
 
 The browser floor is a hard requirement for students: a desktop Chrome or Edge 133+ or Firefox
-134+ (WebAssembly Memory64), cross-origin isolation, and about 8 GB of memory (the tab needs 4–5
-GB). The page says so and still shows the sheet when the browser cannot run Lean.
+134+ (WebAssembly Memory64), cross-origin isolation, and a tab that needs about 6 GB. A computer
+with 16 GB of memory is comfortable, and 8 GB is the minimum with nothing else open. The page
+says so and still shows the sheet when the browser cannot run Lean.
 
 The 4.31 baseline is native Lean 4.31 with the course's own (unported) libraries, on the same
 sheet text. To recreate it (about 8 GB; elan and Lake on the host):
