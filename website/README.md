@@ -112,10 +112,10 @@ python3 website/scripts/compare-checks.py website/out/check/native431 website/ou
 | | Quick path (`build.sh --prebuilt`) | Full build (`build.sh`) |
 |---|---|---|
 | Platform | macOS, Linux, or Windows with WSL2 | macOS on Apple silicon (verified end to end), Linux on arm64; x86_64 Linux, Intel Macs and WSL2 through arm64 emulation (slow) |
-| Tools | Node 24+, npm 10.8+, git, bash | the same, plus python3 3.9+, tar, and Docker that runs `linux/arm64` |
+| Tools | Node 24+, npm 10.8+, git, bash, tar | the same, plus python3 3.9+ and Docker that runs `linux/arm64` |
 | Disk | ~4 GB | ~40 GB at the peak (~14 GB in `out/` afterwards), on a filesystem with hard links |
 | Memory | a browser tab needs ~6 GB | 16 GB; the Docker VM 8 GB or more (`JOBS=1` below that) |
-| Network | ~3.7 GB from GitHub (the runtime, 150 MB; the environments, 3.5 GB) and ~90 MB from npm | ~3.3 GB from GitHub and npm, plus the Ubuntu image the compiler's Docker image is built from |
+| Network | ~3.9 GB from GitHub (the runtime, 0.16 GB; the environments, 3.8 GB) and ~0.1 GB from npm | ~3.3 GB from GitHub and npm, plus the Ubuntu image the compiler's Docker image is built from |
 | Time | minutes | about two hours on Apple silicon |
 
 Nothing needs an account or a key: the toolchain release, the forks' upstreams, the
@@ -125,9 +125,14 @@ dependencies and QED64 are all public, and fetched over HTTPS by pinned commit o
   Docker Engine on x86_64 Linux, enable arm64 emulation once:
   `docker run --privileged --rm tonistiigi/binfmt --install arm64`. Only the compile and
   check-native lanes use Docker; emulated, they take several times longer.
-- **Linux, Docker Engine:** `scripts/in-docker.sh` runs the container as your user, so
-  `website/out` stays yours (`DOCKER_USER=0|1` overrides the choice). An `out/` made by an
-  earlier version of the script as root needs `sudo chown -R "$USER" website/out` once.
+- **Linux:** `scripts/in-docker.sh` checks whether the container's files come out as root's
+  (Docker Engine) and then runs it as your user, so `website/out` stays yours
+  (`DOCKER_USER=0|1` overrides the check). Use the `docker` group or rootless Docker, not
+  `sudo website/build.sh`. An `out/` made as root by an earlier version of the script needs
+  `sudo chown -R "$USER" website/out` once. Docker Engine with `userns-remap` is not supported.
+- **Docker mounts only the clone:** `website/out` must be a real directory inside it (not a
+  symlink elsewhere), on a filesystem with hard links, and the clone's path must be one Docker
+  shares (Docker Desktop: under your home directory by default).
 - **Lake and VS Code** do not work on this branch: `lean-toolchain` is Lean 4.34, but
   `lakefile.toml` still names the course's 4.31 libraries (the ported forks are patch series
   here, not published packages). The website build does not use Lake. To work on the sheets in
@@ -150,8 +155,9 @@ after a full build of the same commit; `fetch` warns when this checkout's Custom
 pins differ from the ones they were made from.
 
 The environments are published once per toolchain release and course change by
-`scripts/publish-prebuilt.sh` (after a full build; it needs `gh` logged in to the repository,
-uploads ~3.6 GB as a GitHub release and pins it in `sources.json`). **Until that has run,
+`scripts/publish-prebuilt.sh` (after a full build, from a pushed commit; it needs `gh` logged
+in to the repository, uploads ~3.8 GB as a GitHub release and pins it in `sources.json`;
+`--dry-run` first). **Until that has run,
 `--prebuilt` stops with a message, and the full build is the only way to get Lean in the page.**
 
 ## Full build
@@ -171,6 +177,10 @@ Re-runs skip what is up to date; `--lanes` picks lanes and `--plan` prints what 
 npm --prefix website/site ci       # once; build.sh does it too
 npm --prefix website/site run dev
 ```
+
+npm warns about install scripts (esbuild, fsevents) and skips an integrity check for the QED64
+git dependency (it is pinned by commit); npm 11.0–11.8 also call `allow-git` (in `site/.npmrc`,
+for npm 12) unknown. These warnings are expected.
 
 Then open <http://localhost:5197/>. The page itself works right after `npm ci`, but Lean needs
 the runtime (`out/release/mirror/runtime`) and the environments (`out/staging/snapshots`),

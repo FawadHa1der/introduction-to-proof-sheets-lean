@@ -70,6 +70,9 @@ function stageInfoview() {
   const dst = path.join(pub, "infoview");
   fs.rmSync(dst, { recursive: true, force: true });
   fs.cpSync(dist, dst, { recursive: true });
+  // Readable whatever modes the copy kept (a Docker Desktop bind mount can leave 0200).
+  const open = (p) => { for (const f of fs.readdirSync(p, { withFileTypes: true })) { const q = path.join(p, f.name); if (f.isDirectory()) { fs.chmodSync(q, 0o755); open(q); } else fs.chmodSync(q, 0o644); } };
+  open(dst);
 }
 
 // --- 3. sheets ------------------------------------------------------------------------------

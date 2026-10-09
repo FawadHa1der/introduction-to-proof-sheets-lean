@@ -105,8 +105,12 @@ LEAN_OPTS_CSV="$(STAGE_MJS="$W/site/scripts/stage.mjs" node --input-type=module 
 QED64_DIR="${QED64_DIR:-$W/site/node_modules/qed64}"
 # One QED64 pin: sources.json's commit is the one the site's lockfile resolves.
 QED64_PIN="$(json .qed64.commit)"
-LOCKED="$(node -p 'require(process.argv[1]).packages["node_modules/qed64"].resolved.split("#")[1]' "$W/site/package-lock.json")"
+LOCKED="$(node -p '(require(process.argv[1]).packages?.["node_modules/qed64"]?.resolved ?? "").split("#")[1] ?? "none"' "$W/site/package-lock.json")"
 [ "$LOCKED" = "$QED64_PIN" ] || die "sources.json pins QED64 $QED64_PIN but website/site/package-lock.json resolves $LOCKED: change both together"
+PREBUILT_FROM="${PREBUILT_FROM:-$(json '.prebuilt?.from')}"; PREBUILT_DIGEST="${PREBUILT_DIGEST:-$(json '.prebuilt?.digest')}"
+if lane_on fetch && [ "$PLAN" = 0 ] && { [ -z "$PREBUILT_FROM" ] || [ -z "$PREBUILT_DIGEST" ]; }; then
+  die "no prebuilt environments are pinned in website/sources.json (prebuilt.from, prebuilt.digest): they are not published yet. Run the full build (website/build.sh), or set PREBUILT_FROM and PREBUILT_DIGEST"
+fi
 run mkdir -p "$OUT/logs"
 
 # The site's npm packages, from the lockfile: the page's dependencies and the default QED64_DIR.
@@ -114,14 +118,17 @@ run mkdir -p "$OUT/logs"
 site_deps() {
   local stamp="$W/site/node_modules/.package-lock.json"
   if [ "$PLAN" = 1 ] || [ ! -f "$stamp" ] || [ "$W/site/package-lock.json" -nt "$stamp" ]; then
-    ( cd "$W/site" && run npm ci --no-audit --no-fund )
+    run npm --prefix "$W/site" ci --no-audit --no-fund
   fi
 }
 
 # ------------------------------------------------------------------------------- sources --
-# A fixed identity for `git am`, so the forks' commits are the same on every machine and no
-# user configuration (identity, signing, hooks) is needed or used.
-GIT_AM=(git -c user.name="proof-sheets build" -c user.email=build@localhost -c commit.gpgSign=false -c core.hooksPath=/dev/null)
+# Git for the forks and dependencies, with none of the user's configuration that could change
+# what is checked out or stop it (hooks, line endings, whitespace fixing); `git am` with a fixed
+# identity, so the forks' commits are the same on every machine and nothing needs configuring.
+GITX=(git -c core.hooksPath=/dev/null -c core.autocrlf=false -c core.eol=lf -c apply.whitespace=nowarn -c advice.detachedHead=false)
+GIT_AM=(env GIT_COMMITTER_NAME="proof-sheets build" GIT_COMMITTER_EMAIL=build@localhost
+  "${GITX[@]}" -c user.name="proof-sheets build" -c user.email=build@localhost -c commit.gpgSign=false -c i18n.commitEncoding=UTF-8)
 lane_sources() {
   say "sources: forks (upstream + patches), pinned dependencies, the site's npm packages"
   local name upstream base want have
@@ -129,35 +136,43 @@ lane_sources() {
     upstream="$(json ".forks['$name'].upstream")"; base="$(json ".forks['$name'].base")"
     local dir="$W/forks/$name" patches=("$W"/patches/"$name"/*.patch)
     [ -e "${patches[0]}" ] || patches=()
-    if [ ! -d "$dir/.git" ]; then
+    if [ ! -e "$dir/.git" ]; then
       # Made aside and moved into place when complete: an interrupted run leaves no half fork.
+      [ "$PLAN" = 1 ] || [ ! -e "$dir" ] || rmdir "$dir" 2>/dev/null || die "website/forks/$name exists but is not a git checkout: delete it to re-create it from the patches"
       run rm -rf "$dir.tmp"
-      run git clone -q "$upstream" "$dir.tmp"
-      run git -C "$dir.tmp" checkout -q -b "$(json ".forks['$name'].branch")" "$base"
+      run "${GITX[@]}" clone -q --config core.autocrlf=false "$upstream" "$dir.tmp"
+      # The base may sit on a branch upstream no longer has: GitHub still serves it by id.
+      [ "$PLAN" = 1 ] || git -C "$dir.tmp" cat-file -e "$base^{commit}" 2>/dev/null || run "${GITX[@]}" -C "$dir.tmp" fetch -q origin "$base"
+      run "${GITX[@]}" -C "$dir.tmp" checkout -q -b "$(json ".forks['$name'].branch")" "$base"
       [ ${#patches[@]} -eq 0 ] || run "${GIT_AM[@]}" -C "$dir.tmp" am -q --committer-date-is-author-date "${patches[@]}"
       run mv "$dir.tmp" "$dir"
     fi
     [ "$PLAN" = 1 ] && continue
     # The checkout must be exactly base + patches (an older port or a stray edit is refused).
-    want="$(cd "$dir" && tmp="$(mktemp -d)" && GIT_INDEX_FILE="$tmp/i" git read-tree "$base" \
-      && for p in ${patches[@]+"${patches[@]}"}; do GIT_INDEX_FILE="$tmp/i" git apply --cached "$p" || exit 1; done \
-      && GIT_INDEX_FILE="$tmp/i" git write-tree; rm -rf "$tmp")" || die "$name: the patches do not apply to $base"
+    local tmp; tmp="$(mktemp -d)"
+    want="$(cd "$dir" && GIT_INDEX_FILE="$tmp/i" git read-tree "$base" \
+      && for p in ${patches[@]+"${patches[@]}"}; do GIT_INDEX_FILE="$tmp/i" "${GITX[@]}" apply --cached "$p" || exit 1; done \
+      && GIT_INDEX_FILE="$tmp/i" git write-tree)" || { rm -rf "$tmp"; die "$name: the patches do not apply to $base"; }
+    rm -rf "$tmp"
     have="$(git -C "$dir" rev-parse 'HEAD^{tree}')"
     [ "$want" = "$have" ] || die "$name: website/forks/$name is not $base + website/patches/$name (tree ${have:0:12}, expected ${want:0:12}). Delete website/forks/$name to re-create it from the patches; if you changed the fork on purpose, commit and re-export the patches (git format-patch $base..HEAD)"
-    [ -z "$(git -C "$dir" status --porcelain --untracked-files=no -- '*.lean')" ] || die "$name: uncommitted Lean edits in website/forks/$name"
+    # (untracked ones too: every .lean file in a fork's tree is compiled)
+    [ -z "$(git -C "$dir" status --porcelain --untracked-files=all -- '*.lean')" ] || die "$name: uncommitted or untracked Lean files in website/forks/$name"
     note "$name: $base + ${#patches[@]} patch(es) ✓"
   done
   local url rev
   for name in $(json ".deps && Object.keys(s.deps).join(' ')"); do
     url="$(json ".deps['$name'].url")"; rev="$(json ".deps['$name'].rev")"
     local dir="$OUT/src/$name"
-    if [ ! -d "$dir/.git" ]; then
+    if [ ! -e "$dir/.git" ]; then
+      [ "$PLAN" = 1 ] || [ ! -e "$dir" ] || rmdir "$dir" 2>/dev/null || die "website/out/src/$name exists but is not a git checkout: delete it to fetch it again"
       run rm -rf "$dir.tmp"
       run mkdir -p "$dir.tmp"
-      run git -C "$dir.tmp" init -q
-      run git -C "$dir.tmp" remote add origin "$url"
-      run git -C "$dir.tmp" fetch -q --depth 1 origin "$rev"
-      run git -C "$dir.tmp" -c advice.detachedHead=false checkout -q FETCH_HEAD
+      run "${GITX[@]}" -C "$dir.tmp" init -q
+      run "${GITX[@]}" -C "$dir.tmp" config core.autocrlf false
+      run "${GITX[@]}" -C "$dir.tmp" remote add origin "$url"
+      run "${GITX[@]}" -C "$dir.tmp" fetch -q --depth 1 origin "$rev"
+      run "${GITX[@]}" -C "$dir.tmp" checkout -q FETCH_HEAD
       run mv "$dir.tmp" "$dir"
     fi
     [ "$PLAN" = 1 ] || [ "$(git -C "$dir" rev-parse HEAD)" = "$rev" ] || die "$name: out/src/$name is not at $rev (delete website/out/src/$name to fetch it again)"
@@ -167,15 +182,26 @@ lane_sources() {
 }
 
 # ------------------------------------------------------------------------------- release --
-# Each unpacked piece carries a stamp with the release id, so a release change replaces it.
-stamped() { [ -f "$1" ] && { [ "$(cat "$1")" = "$RID" ] || [ ! -s "$1" ]; }; } # empty: made before stamps had ids
+# Each unpacked piece carries a stamp with the release id, so a release change replaces it. A
+# piece made before stamps had ids (no stamp, or an empty one) is this release's only if the
+# mirror's release record, from the run that made it, says so: then it gets its stamp.
+LEGACY_RID=""
+stamped() { # stamped <stamp file> <piece present?>
+  [ "$2" = 1 ] || return 1
+  if [ -s "$1" ]; then [ "$(cat "$1")" = "$RID" ]; return; fi
+  [ "$LEGACY_RID" = "$RID" ] || return 1
+  [ "$PLAN" = 1 ] || echo "$RID" > "$1"
+}
 lane_release() {
-  local mirror="$OUT/release/mirror" toolchain=0
-  # The native compiler and the packs only when a later lane compiles, checks or plans.
+  local mirror="$OUT/release/mirror" toolchain=0 l
+  LEGACY_RID="$(node -p 'require(process.argv[1]).id' "$mirror/release.json" 2>/dev/null || true)"
+  # The native compiler and the packs when a later lane compiles, checks or plans, or when the
+  # release lane runs without any later lane (fetching the whole release); not for the quick
+  # path or for a bake or a site build on top of an earlier full build.
   for l in compile check-native plan; do lane_on "$l" && toolchain=1; done
-  [ "$toolchain" = 1 ] || { lane_on fetch && ! lane_on bake; } || toolchain=1
+  [ "$toolchain" = 1 ] || lane_on fetch || lane_on bake || lane_on site || toolchain=1
   say "release: $RID from $RELEASE_FROM (runtime $RUNTIME$([ "$toolchain" = 1 ] || echo '; runtime only'))"
-  if [ "$PLAN" = 1 ] || [ ! -f "$L4W" ] || { [ -f "$OUT/tools/.release" ] && ! stamped "$OUT/tools/.release"; }; then
+  if [ "$PLAN" = 1 ] || ! stamped "$OUT/tools/.release" "$([ -f "$L4W" ] && echo 1)"; then
     # The release's own tools verify everything else. They are fetched first, by hand: the
     # release record must be the pinned one (its own digest, recomputed, equal to the pin), and
     # the tools archive must have the sha256 that record lists for it.
@@ -210,14 +236,14 @@ lane_release() {
   run node "$L4W" fetch --from "$RELEASE_FROM" --id "$RID" --digest "$RDIGEST" --out "$mirror" --only runtime-chunks
   run node "$L4W" fetch --from "$mirror" --id "$RID" --digest "$RDIGEST" --out "$ART" --only runtime
   if [ "$PLAN" = 0 ]; then
-    local got; got="$(node "$L4W" id "$ART" | grep -Eo 'wasm64-[0-9a-f]{16}' | head -1)"
+    local got; got="$(node "$L4W" id "$ART" | grep -Eo 'wasm64-[0-9a-f]{16}' | head -1 || true)"
     [ "$got" = "$RUNTIME" ] || die "the runtime rebuilt from the release is $got, sources.json pins $RUNTIME"
     note "runtime $got ✓"
   fi
   [ "$toolchain" = 1 ] || return 0
   # The native compiler and the library packs are fetched (verified) only to be unpacked, and
   # then dropped from the mirror (KEEP_MIRROR=1 keeps them): ~2.5 GB the build never reads again.
-  if [ "$PLAN" = 1 ] || ! { [ -x "$LEAN" ] && { [ ! -e "$OUT/native64/.release" ] || stamped "$OUT/native64/.release"; }; }; then
+  if [ "$PLAN" = 1 ] || ! stamped "$OUT/native64/.release" "$([ -x "$LEAN" ] && echo 1)"; then
     run node "$L4W" fetch --from "$RELEASE_FROM" --id "$RID" --digest "$RDIGEST" --out "$mirror" --only native64
     run rm -rf "$OUT/native64" "$OUT/native64.tmp"
     run mkdir -p "$OUT/native64.tmp"
@@ -226,7 +252,7 @@ lane_release() {
     [ "$PLAN" = 1 ] || echo "$RID" > "$OUT/native64/.release"
     [ "${KEEP_MIRROR:-0}" = 1 ] || run rm -rf "$mirror/native64"
   fi
-  if [ "$PLAN" = 1 ] || ! stamped "$OUT/trees/.unpacked"; then
+  if [ "$PLAN" = 1 ] || ! stamped "$OUT/trees/.unpacked" "$([ -f "$OUT/trees/.unpacked" ] && echo 1)"; then
     run node "$L4W" fetch --from "$RELEASE_FROM" --id "$RID" --digest "$RDIGEST" --out "$mirror" --only "${PACKS// /,}"
     run rm -rf "$OUT/trees"
     for p in $PACKS; do
@@ -293,7 +319,8 @@ lane_bake() {
     bake init "#check (2 + 2 : Nat)"
   fi
   [ "$PLAN" = 1 ] && { note "then, per entry of $plan: bake, browser-check its sheets against out/check/native434, delete the raw region"; return 0; }
-  local opts=(); IFS=, read -r -a o <<< "$LEAN_OPTS_CSV"; for x in "${o[@]}"; do opts+=(--opt "${x#-D}"); done
+  local opts=() o=() x; [ -z "$LEAN_OPTS_CSV" ] || IFS=, read -r -a o <<< "$LEAN_OPTS_CSV"
+  for x in ${o[@]+"${o[@]}"}; do opts+=(--opt "${x#-D}"); done
   node -e 'for (const e of require(process.argv[1]).entries) console.log([e.name, e.imports.join(" "), e.roots.join(","), e.label, e.sheets.join(" ")].join("\t"))' "$plan" |
   while IFS=$'\t' read -r name imports roots label sheets; do
     if baked "$name" && [ -f "$OUT/check/browser/.$name.ok" ]; then
@@ -307,7 +334,7 @@ lane_bake() {
     for s in $sheets; do
       local file; file="$REPO/Bewijzen/$(echo "$s" | sed 's#\.#/#').lean"
       node --stack-size=8192 "$W/scripts/browser-check.mjs" --qed64 "$QED64_DIR" --artifact "$ART" --lib "$OUT/bake-tree" \
-        --snap-dir "$OUT/bake-work" --snapshots "init,$name" --sheet "$file" --out "$OUT/check/browser/$s.json" "${opts[@]}" \
+        --snap-dir "$OUT/bake-work" --snapshots "init,$name" --sheet "$file" --out "$OUT/check/browser/$s.json" ${opts[@]+"${opts[@]}"} \
         > "$OUT/logs/browser-$s.log" 2>&1 || { tail -5 "$OUT/logs/browser-$s.log"; ok=0; continue; }
       mkdir -p "$OUT/check/pair" && rm -f "$OUT/check/pair"/*.json
       cp "$OUT/check/native434/$s.json" "$OUT/check/pair/" 2>/dev/null || { note "  $s: no native result to compare (run check-native)"; ok=0; continue; }
@@ -326,17 +353,16 @@ lane_bake() {
 
 # --------------------------------------------------------------------------------- fetch --
 lane_fetch() {
-  local from="${PREBUILT_FROM:-$(json '.prebuilt?.from')}" digest="${PREBUILT_DIGEST:-$(json '.prebuilt?.digest')}"
-  say "fetch: the prebuilt environments (snapshots and plan) from ${from:-nowhere}"
-  [ -n "$from" ] && [ -n "$digest" ] || die "no prebuilt environments are pinned in website/sources.json (prebuilt.from, prebuilt.digest): run the full build (website/build.sh), or set PREBUILT_FROM and PREBUILT_DIGEST"
-  run node "$W/scripts/prebuilt.mjs" fetch --from "$from" --digest "$digest" --out "$OUT" --release "$RID" --runtime "$RUNTIME"
+  say "fetch: the prebuilt environments (snapshots and plan) from ${PREBUILT_FROM:-<prebuilt.from>}"
+  run node "$W/scripts/prebuilt.mjs" fetch --from "${PREBUILT_FROM:-<prebuilt.from>}" --digest "${PREBUILT_DIGEST:-<prebuilt.digest>}" \
+    --out "$OUT" --release "$RID" --runtime "$RUNTIME" --qed64 "$QED64_PIN"
 }
 
 # ---------------------------------------------------------------------------------- site --
 lane_site() {
   say "site: stage, type-check and build website/site"
   site_deps
-  ( cd "$W/site" && run npm run -s build:site )
+  run npm --prefix "$W/site" run -s build:site
 }
 
 lane_on sources && lane_sources
