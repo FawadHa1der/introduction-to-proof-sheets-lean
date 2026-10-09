@@ -9,6 +9,11 @@ It takes the *faithful* path: Lean receives each sheet's Verso file itself (`#do
 environment of exactly the sheet's imports, so a sheet's messages in the browser are native
 Lean's, message for message. The build checks that for every sheet (below).
 
+**[HOW-IT-WORKS.md](HOW-IT-WORKS.md)** explains the process step by step: how the build turns
+the course into 13 Lean environments and checks them, how they are published and fetched, and
+what the page does when a student opens a sheet or switches to another (and why Lean sometimes
+restarts). This README is the reference: what is where, requirements, commands.
+
 ```
  Waterproof editor (ProseMirror)                      Lean 4.34 in a Web Worker (QED64, wasm64)
  ┌─────────────────────────────────┐   full text     ┌──────────────────────────────────────────┐
@@ -23,6 +28,7 @@ Lean's, message for message. The build checks that for every sheet (below).
 
 | Path | What |
 |---|---|
+| `HOW-IT-WORKS.md` | The process: build, publish, and what the page does when a sheet is opened or switched. |
 | `build.sh` | The whole build, in lanes (`--help`); `--prebuilt` for the quick path. |
 | `sources.json` | Every pin: the toolchain release, QED64, the prebuilt environments, the forks (upstream commit + patches), the dependencies. |
 | `patches/<fork>/` | The forks as patch series (`git format-patch`), applied by the `sources` lane. |
@@ -75,8 +81,10 @@ Lean's, message for message. The build checks that for every sheet (below).
 Each snapshot holds the environment of one *ordered* import closure: Lean adds modules in a
 depth-first walk of the header, and some environment state depends on that order (Verbose's
 configuration is the last module's). The 28 sheets need 13 such environments. The page boots
-the entry baked for exactly the open sheet's imports, never a larger one, and restarts Lean when
-the next sheet needs another entry (QED64 reports the header as `exact`).
+the entry baked for exactly the open sheet's ordered import closure, never a larger one, and
+restarts Lean when the next sheet needs another entry (QED64 reports the header `exact`, or
+`covered` for the 5 sheets whose import lines differ from the entry's but close over the same
+modules in the same order). HOW-IT-WORKS.md §1, §4 and §5 explain why.
 
 Measured on an Apple-silicon Mac (while other Lean jobs ran beside it):
 
@@ -87,6 +95,7 @@ Measured on an Apple-silicon Mac (while other Lean jobs ran beside it):
 | All 13 environments plus `init` | 3.8 GB to host |
 | First visit to a sheet (cold cache, local server) | about 1 minute: runtime + environment download, compile, load |
 | Opening a sheet again (warm cache) | 10–30 s, most of it waiting for the previous tab's Lean to stop |
+| Switching to a sheet of another environment | a Lean restart (about 7 s, estimated from Node runs, not yet timed in a browser) plus checking the sheet; the first time, or after eviction, also downloading and inflating that environment (225–324 MB) (HOW-IT-WORKS.md §4); the same environment: checking only |
 | Checking a sheet once loaded (browser) | 4.7–13.8 s per sheet; natively, with the import, 6–15 s |
 | Browser tab memory, a sheet loaded and checked | 5.8 GB physical footprint with a 3,494-module environment, 6.0 GB with a 4,825-module one (macOS `footprint`; RSS 8.7–8.9 GB including reclaimable pages) |
 
@@ -166,7 +175,7 @@ in to the repository, uploads ~3.8 GB as a GitHub release and pins it in `source
 website/build.sh
 ```
 
-The first run takes about two hours: Docker compiles ~330 modules (~15 min), each of the 13
+The first run takes about two hours: Docker compiles 284 modules (~15 min), each of the 13
 snapshot bakes takes ~6 minutes, and the browser check of the 28 sheets takes ~15 minutes.
 Re-runs skip what is up to date; `--lanes` picks lanes and `--plan` prints what would run
 (`website/build.sh --help`). Peak memory: ~12 GB for a browser check, ~9 GB for a bake.
@@ -200,7 +209,8 @@ npm --prefix website/site test
 ```
 
 The page's code without Lean: the Lean file format on every sheet, the text document, the edge
-Worker (seconds; the entry check is skipped before a plan exists). Lean's side is checked by the
+Worker, and the environment switching (`test/checker.test.mjs`, the Checker against a stand-in
+for QED64's relay) — seconds; the entry check is skipped before a plan exists. Lean's side is checked by the
 build: `check-native` (every sheet natively) and `bake` (every sheet through the browser's
 FileWorker, against native). In a browser, on the dev server:
 1. `?fixture=hole-status`: the three holes show green, red with Lean's error, and red;
@@ -226,7 +236,9 @@ The browser downloads Lean once (160 MB) and then each environment it needs once
 
 - **Sheet text only** (most of the exporter's commits): rebuild the site (`--lanes site`); no
   rebake. A sheet whose import list is new needs `--lanes plan,bake,site`.
-- **Customlib, Verbose or the genre**: `--lanes compile,check-native,plan,bake,site`.
+- **Customlib, Verbose or the genre**: `--lanes compile,check-native,plan,bake,site`. The bake
+  lane notices the changed overlay (each entry's marker holds a fingerprint of the compiled
+  modules, the runtime, QED64 and the Lean options) and bakes and checks every entry again.
 - **Upstream exports on Lean 4.31**: merge them into `website-v4.34`, port what 4.34 needs, and
   run the lanes above. `check-native` and the browser comparison catch what the port missed.
 - **A new toolchain release**: change `sources.json` (release and QED64 pins) and run every lane.
