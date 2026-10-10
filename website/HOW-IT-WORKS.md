@@ -177,8 +177,13 @@ check.
    recursion depth has been reached: the WebAssembly runtime's stack is exhausted" where a proof
    needs more: in Chrome, 16 of the 28 sheets get such errors on proofs that check natively (53
    in all, 19 on L07; `--lanes chrome-check`, 2026-10-10), and the build's own browser check,
-   run under Node with its larger stack, does not see them. The Lean fork's kernel patch 0038
-   (a guard by recursion depth) fixes it; it needs a new toolchain release and a rebake.
+   run under Node with its larger stack, does not see them. Students' proofs meet the same
+   limit: in QED64's measurements 5 nested `have … := by` blocks already give the error, and a
+   25-long `<;>` chain or 25 nested `have`s kill Lean. The Lean fork's kernel patch 0038 (a
+   guard by recursion depth) fixes it; it needs a new toolchain release and a rebake. The
+   runtime's default guard is the right one for these sheets: QED64 main's worker lowers it
+   (8192), which in Chrome lets L02.1 and L08.1 overflow and kill Lean, so `stage.mjs` refuses
+   a QED64 worker that sets it.
 
 ## 4. The page: switching sheets
 

@@ -64,6 +64,10 @@ function stageWorkers(flags) {
   }
   const worker = path.join(pub, "workers/lean.worker.js");
   const src = fs.readFileSync(worker, "utf8");
+  // The runtime's own engine-stack probe size is the one measured safe for the course's sheets in
+  // Chrome. QED64 main's worker overrides it (8192, HARDENING #67/#71), which lets L02.1 and L08.1
+  // overflow and kill Lean: a QED64 pin that sets it needs a decision and --lanes chrome-check.
+  if (/LEAN_WASM_STACK_PROBE_SLOTS\s*=/.test(src)) throw new Error("lean.worker.js sets LEAN_WASM_STACK_PROBE_SLOTS: on this site's sheets 8192 kills Lean on L02.1 and L08.1 in Chrome (HOW-IT-WORKS.md §3). Decide the value with website/build.sh --lanes chrome-check, then let stage.mjs patch it");
   const needle = 'M.callMain(["--worker", "-Dserver.reportDelayMs=0"]);';
   const hits = src.split(needle).length - 1;
   if (hits !== 1) throw new Error(`lean.worker.js: expected the resident callMain line once, found it ${hits} times — re-check the option patch against this QED64 pin`);
