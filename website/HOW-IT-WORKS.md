@@ -169,7 +169,16 @@ check.
    Lean is still checking the file, if an error is in the hole, if no `QED` (or `□`) follows
    the hole before the next one, or if goals remain at that `QED`. It is invalid if Lean warns
    that the declaration uses `sorry`, and correct otherwise. The InfoView (goals, the genre's
-   panel, Verbose's suggestions) talks to the same FileWorker over RPC.
+   panel, Verbose's suggestions) talks to the same FileWorker over RPC. The editor's completions
+   list the sheet's own declarations, read from its text (`site/src/declarations.ts`), not asked
+   of Lean (section 4 says why).
+8. **The stack, in Chrome.** A Chrome Worker gives Lean about 500 KiB of engine stack, far less
+   than native Lean or Node has. The release's runtime guards it cautiously and reports "maximum
+   recursion depth has been reached: the WebAssembly runtime's stack is exhausted" where a proof
+   needs more: in Chrome, 16 of the 28 sheets get such errors on proofs that check natively (53
+   in all, 19 on L07; `--lanes chrome-check`, 2026-10-10), and the build's own browser check,
+   run under Node with its larger stack, does not see them. The Lean fork's kernel patch 0038
+   (a guard by recursion depth) fixes it; it needs a new toolchain release and a rebake.
 
 ## 4. The page: switching sheets
 
@@ -245,9 +254,12 @@ finished.
 If Lean crashes, QED64 restarts it, after the same 1.5 s settle, and the Checker makes that new
 Lean boot the open sheet's environment (not the one the relay remembers from the last switch,
 which the student may have left). After three crashes (or failed starts) within two minutes it
-stops, and the page says so; opening another sheet, editing, or a reload starts it again. (In
-one of 14 browser boots, a Lean thread overflowed its stack right after checking L07, and the
-page recovered by itself 22 s later; this is reported to QED64.)
+stops, and the page says so; opening another sheet, editing, or a reload starts it again. One
+such crash was systematic and is gone: the page used to ask Lean for the document's symbols
+(for completions) after every check, and Verso's handler for that request walks every command of
+the document in Lean's interpreter, which on L07 (~50 commands) overflowed a Worker's stack and
+killed Lean on every new version of its text. The page reads the declarations from the text
+instead; with that, the Chrome check of all 28 sheets saw no crash.
 
 ### What a switch costs
 

@@ -2,8 +2,9 @@
 // Generated inputs of the site, re-staged before every dev start and build (`npm run stage`):
 //
 // 1. public/workers/: QED64's five worker scripts, exactly closure.json's set (docs/EMBEDDING.md
-//    §6.1 step 3). lean.worker.js gets one edit: the course's lakefile `leanOptions` are appended
-//    to its `callMain(["--worker", …])` as -D flags. Native Lake passes them to Lean the same way;
+//    §6.1 step 3). lean.worker.js gets one edit: the course's lakefile `leanOptions`
+//    (workerOptions) are appended to its `callMain(["--worker", …])` as -D flags. Native Lake
+//    passes them to Lean the same way;
 //    QED64 has no option channel yet (website/README.md, Requests to QED64), so the staged copy
 //    carries them. The edit must apply exactly once or the stage fails.
 // 2. public/infoview/: @leanprover/infoview's dist (the InfoView ESM, its React builds, CSS).
@@ -38,6 +39,14 @@ export function leanOptions(lakefile = path.join(repo, "lakefile.toml")) {
     opts[m[1]] = v === "true" || v === "false" ? v === "true" : /^-?\d+$/.test(v) ? Number(v) : JSON.parse(v);
   }
   return opts;
+}
+/** The options the page's Lean (the FileWorker) runs with: the course's. Elab.async is left at
+ * Lean's server default (on), measured on 2026-10-10: with the course's sheets the runtime's
+ * thread pool never grew past its 24 threads either way (QED64 HARDENING #70 needs ~20 slow
+ * theorems in flight), -DElab.async=false changed no message in Chrome, and it starts tactics
+ * deeper in the stack, which on this runtime is the scarce resource (HOW-IT-WORKS.md §3). */
+export function workerOptions() {
+  return { ...leanOptions() };
 }
 const asFlags = (opts) => Object.entries(opts).map(([k, v]) => `-D${k}=${v}`);
 
@@ -142,7 +151,7 @@ function stageSheets() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const opts = leanOptions();
+  const opts = workerOptions();
   const w = stageWorkers(asFlags(opts));
   stageInfoview();
   const n = stageSheets();

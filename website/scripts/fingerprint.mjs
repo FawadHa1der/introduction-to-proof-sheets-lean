@@ -4,11 +4,12 @@
 // current fingerprint:
 // - bake (out/check/browser/.<entry>.baked): the compiled overlay's contents (out/build/lib, and
 //   the Mathlib modules compiled into out/build/fill: those that are not hard links into the
-//   packs), the runtime, the QED64 pin and the Lean options;
-// - check (out/check/browser/.<entry>.ok): the bake fingerprint, the staged snapshot's digest,
-//   and the text of each of the entry's sheets with native Lean's messages for it. A changed
-//   sheet is checked again without a rebake (a rebake renames the snapshot: baking is not
-//   byte-deterministic, and every student would download it again).
+//   packs), the runtime and the QED64 pin (the bake takes no Lean options);
+// - check (out/check/browser/.<entry>.ok): the bake fingerprint, the page's FileWorker options,
+//   the staged snapshot's digest, and the text of each of the entry's sheets with native Lean's
+//   messages for it. A changed sheet or option is checked again without a rebake (a rebake
+//   renames the snapshot: baking is not byte-deterministic, and every student would download it
+//   again).
 //
 //   fingerprint.mjs --out <website/out> --runtime <id> --qed64 <commit> --opts <-Dk=v,...> [--entry <name>]
 //     prints "<entry>\t<bake>\t<check>" for every entry of out/plan/entries.json (or one)
@@ -35,7 +36,7 @@ export function fingerprints({ out, runtime, qed64, opts = "", entry = null }) {
   const ino = (p) => { try { return fs.statSync(p).ino; } catch { return -1; } };
   if (fs.existsSync(fill)) walk(fill, fill, (p, rel) => ino(path.join(fat, rel)) !== fs.statSync(p).ino);
   files.sort((a, b) => (a[0] < b[0] ? -1 : 1));
-  const bake = sha256(JSON.stringify({ files, runtime, qed64, opts }));
+  const bake = sha256(JSON.stringify({ files, runtime, qed64 }));
 
   const indexFile = path.join(out, "staging/snapshots/index.json");
   const index = fs.existsSync(indexFile) ? JSON.parse(fs.readFileSync(indexFile, "utf8")) : { snapshots: [] };
@@ -50,7 +51,7 @@ export function fingerprints({ out, runtime, qed64, opts = "", entry = null }) {
       return [id, sha256(text), sha256(JSON.stringify(native))];
     });
     const staged = index.snapshots.find((x) => x.name === e.name && x.runtime === runtime)?.digest ?? null;
-    return { entry: e.name, bake, check: sha256(JSON.stringify({ bake, staged, sheets })) };
+    return { entry: e.name, bake, check: sha256(JSON.stringify({ bake, opts, staged, sheets })) };
   });
 }
 

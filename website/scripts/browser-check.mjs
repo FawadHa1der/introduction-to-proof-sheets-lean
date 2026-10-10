@@ -235,8 +235,9 @@ globalThis.Module = {
     const status = M._lean_browser64_configure_input_ring(typeof raw === "bigint" ? raw : BigInt(raw), CAP);
     if (status !== 0) return finish(false, `ring rejected: ${status}`);
     installStdoutTap();
-    // The page's worker passes -Dserver.reportDelayMs=0 (lean.worker.js); the course's
-    // lakefile leanOptions follow as -D flags, as the website's staged worker passes them.
+    // The page's worker passes -Dserver.reportDelayMs=0 (lean.worker.js); the worker options
+    // follow as -D flags (stage.mjs workerOptions: the course's lakefile leanOptions), as the
+    // website's staged worker passes them.
     M.callMain(["--worker", "-Dserver.reportDelayMs=0", ...leanOpts]);
     log(`--worker started with ${leanOpts.join(" ") || "no extra options"}; opening ${path.basename(sheet)}`);
     send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { processId: null, rootUri: null, capabilities: {} } });

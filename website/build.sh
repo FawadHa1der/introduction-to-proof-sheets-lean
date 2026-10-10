@@ -31,6 +31,10 @@
 #   fetch         instead of compile..bake: the prebuilt snapshots and plan that
 #                 scripts/publish-prebuilt.sh published (sources.json prebuilt), verified
 #   site          the web page (website/site): stage, type-check, vite build
+#   chrome-check  (not in the default lanes) every sheet in real Chrome on a running dev or
+#                 preview server (CHROME_CHECK_URL, default http://localhost:5197/), held against
+#                 out/check/native434 (scripts/chrome-check.mjs; Playwright's Chromium:
+#                 npx --prefix website/site playwright install chromium-headless-shell)
 #
 # Environment:
 #   RELEASE_FROM   where the release is fetched from: its GitHub download URL (default, from
@@ -66,7 +70,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 for l in ${LANES//,/ }; do
-  case "$l" in sources|release|compile|check-native|plan|bake|fetch|site) ;; *) echo "unknown lane: $l" >&2; exit 2 ;; esac
+  case "$l" in sources|release|compile|check-native|plan|bake|fetch|site|chrome-check) ;; *) echo "unknown lane: $l" >&2; exit 2 ;; esac
 done
 
 say()  { printf '\n\033[1;34m== %s\033[0m\n' "$*"; }
@@ -97,11 +101,18 @@ LEAN="$OUT/native64/bin/lean"
 L4W="$OUT/tools/package/cli.mjs"
 ART="$OUT/release/artifact"
 # (stage.mjs's path goes by the environment: as process.argv[1] it would run its own main.)
-LEAN_OPTS_CSV="$(STAGE_MJS="$W/site/scripts/stage.mjs" node --input-type=module -e '
-  const { pathToFileURL } = await import("node:url");
-  const { leanOptions } = await import(pathToFileURL(process.env.STAGE_MJS).href);
-  console.log(Object.entries(leanOptions()).map(([k, v]) => "-D" + k + "=" + v).join(","));
-')"
+# LEAN_OPTS_CSV: the course's options, as native `lean` gets them (check-native);
+# WORKER_OPTS_CSV: what the page's FileWorker runs with (stage.mjs workerOptions: today the
+# same), which the bake lane's browser check passes too.
+options_csv() {
+  STAGE_MJS="$W/site/scripts/stage.mjs" node --input-type=module -e '
+    const { pathToFileURL } = await import("node:url");
+    const stage = await import(pathToFileURL(process.env.STAGE_MJS).href);
+    console.log(Object.entries(stage[process.argv[1]]()).map(([k, v]) => "-D" + k + "=" + v).join(","));
+  ' "$1"
+}
+LEAN_OPTS_CSV="$(options_csv leanOptions)"
+WORKER_OPTS_CSV="$(options_csv workerOptions)"
 QED64_DIR="${QED64_DIR:-$W/site/node_modules/qed64}"
 # One QED64 pin: sources.json's commit is the one the site's lockfile resolves.
 QED64_PIN="$(json .qed64.commit)"
@@ -312,15 +323,16 @@ lane_bake() {
   fi
   [ "$PLAN" = 1 ] && { note "then, per entry of $plan: bake, browser-check its sheets against out/check/native434, delete the raw region"; return 0; }
   # Two markers per entry hold what its bake and its check depended on (scripts/fingerprint.mjs):
-  # .<entry>.baked the compiled overlay, runtime, QED64 and options; .<entry>.ok that, the staged
-  # snapshot, its sheets' text and native messages. A sheet edit re-checks without a rebake.
-  fingerprint() { node "$W/scripts/fingerprint.mjs" --out "$OUT" --runtime "$RUNTIME" --qed64 "$QED64_PIN" --opts "$LEAN_OPTS_CSV" --entry "$1" | cut -f"$2"; }
+  # .<entry>.baked the compiled overlay, runtime and QED64; .<entry>.ok that, the worker's
+  # options, the staged snapshot, its sheets' text and native messages. A sheet edit or an
+  # option change re-checks without a rebake.
+  fingerprint() { node "$W/scripts/fingerprint.mjs" --out "$OUT" --runtime "$RUNTIME" --qed64 "$QED64_PIN" --opts "$WORKER_OPTS_CSV" --entry "$1" | cut -f"$2"; }
   # inflate <name>: the staged snapshot back into bake-work/<name>.snap, for a check without a bake.
   inflate() {
     local file; file="$(node -p 'require("path").basename(require(process.argv[1]).snapshots.find((e) => e.name === process.argv[2]).url)' "$OUT/staging/snapshots/index.json" "$1")"
     gunzip -c "$OUT/staging/snapshots/$file" > "$OUT/bake-work/$1.snap.tmp" && mv "$OUT/bake-work/$1.snap.tmp" "$OUT/bake-work/$1.snap"
   }
-  local opts=() o=() x; [ -z "$LEAN_OPTS_CSV" ] || IFS=, read -r -a o <<< "$LEAN_OPTS_CSV"
+  local opts=() o=() x; [ -z "$WORKER_OPTS_CSV" ] || IFS=, read -r -a o <<< "$WORKER_OPTS_CSV"
   for x in ${o[@]+"${o[@]}"}; do opts+=(--opt "${x#-D}"); done
   node -e 'for (const e of require(process.argv[1]).entries) console.log([e.name, e.imports.join(" "), e.roots.join(","), e.label, e.sheets.join(" ")].join("\t"))' "$plan" |
   while IFS=$'\t' read -r name imports roots label sheets; do
@@ -375,6 +387,14 @@ lane_site() {
   run npm --prefix "$W/site" run -s build:site
 }
 
+# ----------------------------------------------------------------------------- chrome-check --
+lane_chrome_check() {
+  local url="${CHROME_CHECK_URL:-http://localhost:5197/}"
+  say "chrome-check: every sheet in Chrome on $url, against native Lean"
+  [ "$PLAN" = 1 ] || curl -sf -o /dev/null "${url%/}/sheets/index.json" || die "no site at $url: start npm --prefix website/site run dev (or preview) first, or set CHROME_CHECK_URL"
+  run node "$W/scripts/chrome-check.mjs" --url "$url"
+}
+
 lane_on sources && lane_sources
 lane_on release && lane_release
 lane_on compile && lane_compile
@@ -383,4 +403,5 @@ lane_on plan && lane_plan
 lane_on bake && lane_bake
 lane_on fetch && lane_fetch
 lane_on site && lane_site
+lane_on chrome-check && lane_chrome_check
 say "done ($LANES)"

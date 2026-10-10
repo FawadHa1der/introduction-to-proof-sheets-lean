@@ -6,8 +6,13 @@ exercise holes, and Lean 4.34 checks them **in the browser tab**: no installatio
 
 It takes the *faithful* path: Lean receives each sheet's Verso file itself (`#doc (WaterproofGenre) … =>`, Markdown prose, `::::multilean` exercises with
 `:::input` holes), exactly as the VS Code extension sends it. It elaborates the file in the
-environment of exactly the sheet's imports, so a sheet's messages in the browser are native
-Lean's, message for message. The build checks that for every sheet (below).
+environment of exactly the sheet's imports, so that a sheet's messages in the browser are native
+Lean's, message for message. The build checks that for every sheet with the browser's Lean under
+Node (below). **In Chrome, on the current toolchain release, this holds for only about half the
+sheets**: the others show extra "the WebAssembly runtime's stack is exhausted" errors, because a
+Chrome Worker gives Lean far less stack than Node does, and the release's stack guard is tuned
+too cautiously for it. The Lean fork's next runtime fixes that (Requests, below);
+`--lanes chrome-check` measures it.
 
 **[HOW-IT-WORKS.md](HOW-IT-WORKS.md)** explains the process step by step: how the build turns
 the course into 13 Lean environments and checks them, how they are published and fetched, and
@@ -37,6 +42,7 @@ restarts). This README is the reference: what is where, requirements, commands.
 | `scripts/check-sheets.py` | Every sheet natively: errors only in exercise holes. |
 | `scripts/plan-entries.mjs` | One snapshot entry per distinct environment (ordered import closure). |
 | `scripts/browser-check.mjs` | One sheet through the browser's own FileWorker under Node, as the page runs it. |
+| `scripts/chrome-check.mjs` | Every sheet in real Chrome against native Lean (`--lanes chrome-check`, on a running dev or preview server). |
 | `scripts/compare-checks.py` | Native versus browser (or 4.31 versus 4.34), message by message. |
 | `scripts/fingerprint.mjs` | What each baked and checked entry depends on; the bake lane redoes an entry when it changes. |
 | `scripts/prebuilt.mjs`, `scripts/publish-prebuilt.sh` | The baked environments as a GitHub release, and the fetch lane that installs them. |
@@ -72,11 +78,12 @@ restarts). This README is the reference: what is where, requirements, commands.
 
 ## Faithfulness, and how it is checked
 
-| Check | Lane | Result (2026-10-08) |
+| Check | Lane | Result |
 |---|---|---|
 | Every sheet natively on 4.34: errors only at the (empty) holes | `check-native` | 28/28 (L08's Example 4.3.4 fails on 4.31 too: `expected/known-issues.json`) |
 | Every sheet's messages on 4.34 = on native Lean 4.31 with the unported libraries | manual (recipe below) | 28/28 identical (severity, position, text) |
-| Every sheet through the browser's FileWorker = native 4.34, message by message | `bake` | 28/28 identical |
+| Every sheet through the browser's FileWorker **under Node** = native 4.34, message by message | `bake` | 28/28 identical |
+| Every sheet **in Chrome** (headless Chromium 151, fresh load) = native 4.34 | `chrome-check` | 12/28 identical, 0 Lean deaths (2026-10-10); the other 16 have extra "stack is exhausted" errors (53 in all; L07 has 19), and which ones vary a little between runs |
 | The page in a browser: boot, editing, hole status, goal panel, environment switch, saved work | manual (below) | passed, on the dev server and on the production build |
 
 Each snapshot holds the environment of one *ordered* import closure: Lean adds modules in a
@@ -220,7 +227,15 @@ Worker, and the environment switching (`test/checker.test.mjs` against a stand-i
 `test/checker-real-relay.test.mjs` against QED64's own) — seconds; the entry check is skipped
 before a plan exists. Lean's side is checked by the
 build: `check-native` (every sheet natively) and `bake` (every sheet through the browser's
-FileWorker, against native). In a browser, on the dev server:
+FileWorker under Node, against native). Chrome itself, where a Worker has much less stack:
+
+```bash
+npx --prefix website/site playwright install chromium-headless-shell   # once
+website/build.sh --lanes chrome-check       # with the dev server running (CHROME_CHECK_URL)
+```
+
+It opens every sheet with a fresh load and fails on any message that differs from native Lean,
+any Lean death, or a sheet that never checks (`out/check/chrome/`). By hand, on the dev server:
 1. `?fixture=hole-status`: the three holes show green, red with Lean's error, and red;
 2. type a proof into the empty hole: it turns green;
 3. move the cursor into a proof: the goal panel follows;
@@ -253,17 +268,30 @@ The browser downloads Lean once (160 MB) and then each environment it needs once
   `scripts/fingerprint.mjs`) and bakes and checks the affected entries again.
 - **Upstream exports on Lean 4.31**: merge them into `website-v4.34`, port what 4.34 needs, and
   run the lanes above. `check-native` and the browser comparison catch what the port missed.
-- **A new toolchain release**: change `sources.json` (release and QED64 pins) and run every lane.
-  Snapshots are paired with one runtime build; they are always rebaked with it.
+- **A new toolchain release**: change `sources.json` (release and QED64 pins) and run every lane,
+  then `--lanes chrome-check`. Snapshots are paired with one runtime build; they are always
+  rebaked with it.
 - **After any rebake**, publish the environments again (`scripts/publish-prebuilt.sh`) so that
   the quick path serves them; a sheet-text-only change needs no new publish.
 
 ## Requests to QED64 and the Lean fork
 
 Done in this site, and better done upstream:
+- **The Chrome stack budget** (the one that matters most): on the release's runtime
+  (wasm64-f69cca24d0878a58, kernel patch 0036) 16 of 28 sheets get extra "stack is exhausted"
+  errors in Chrome, where a Worker has ~500 KiB of engine stack. The guard probes the engine
+  stack only every 16th `checkSystem`, so it must keep a wide reserve (16384 slots); QED64 main's
+  interim of 8192 halves the errors but lets L02.1 and L08.1 overflow and kill Lean (measured),
+  and no value between is safe. The fix is the Lean fork's kernel patch 0038 (a guard by
+  recursion depth), with native exports for the core functions the interpreter now runs (see
+  the next item). Adopting it means a new toolchain release and a rebake of every snapshot; its
+  acceptance test is `--lanes chrome-check`: 28/28 equal to native, no Lean death.
 - **Lean options**: the site patches its staged copy of QED64's `lean.worker.js` to pass the
-  course's lakefile `leanOptions` as `-D` flags (`site/scripts/stage.mjs`; the patch must apply
-  exactly once). QED64 should take options per session.
+  course's lakefile `leanOptions` as `-D` flags (`site/scripts/stage.mjs` `workerOptions`; the
+  patch must apply exactly once). QED64 should take options per session. QED64 plans to pass
+  `Elab.async=false` too (HARDENING #70: ~20 slow theorems in flight grow the runtime's thread
+  pool until the tab crashes); the site does not: with the course's sheets the pool never grew,
+  the flag changed no message in Chrome, and it starts tactics deeper in the stack.
 - **Exact environments**: the site passes its own snapshot policy so that a sheet gets the entry
   of its ordered import closure. QED64's root matching cannot tell two orders of the same
   modules apart.
@@ -276,9 +304,15 @@ Done in this site, and better done upstream:
 - **The bake's exit wait**: QED64's `bake-snapshot.mjs` waits 300 s for the baking process to go
   quiet after the snapshot is written; that is ~70 of a full build's 114 minutes. Finishing once
   the snapshot file is complete and stable would bring a full build to ~47 minutes.
-- **A stack overflow in a Lean thread**: in one of 14 browser boots, right after checking L07, a
-  Lean thread died with "Maximum call stack size exceeded" (the HARDENING #60 failure, on a
-  runtime that carries its fix); the page recovered 22 s later. The crash record says only
+- **Interpreted core code**: Verso answers `textDocument/documentSymbol` with its own handler,
+  which waits on every command snapshot of the document (`IO.AsyncList.waitAll`). Called from
+  Verso's interpreted code, that core function runs in Lean's interpreter too (lean.wasm exports
+  no native entry for it), at ~10 KiB of engine stack per command, so on a sheet of ~50
+  commands (L07) the request overflowed a Chrome Worker's stack and killed Lean on every new
+  version of the text; three deaths stop Lean. The page therefore does not ask for
+  `documentSymbol` (its completions come from the text, `site/src/declarations.ts`); with that,
+  the Chrome check sees no death. The kernel's fixes: native exports for such core functions,
+  and patch 0038's guard turning the overflow into a Lean error. The crash record says only
   "Uncaught [object ErrorEvent]" and should carry the error text.
 - **Snapshot caching**: a stored region is recognised by its size and first bytes, not its
   sha256; the browser's HTTP cache does not keep a 324 MB snapshot, so an evicted environment is

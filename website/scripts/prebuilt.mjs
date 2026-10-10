@@ -101,8 +101,8 @@ async function pack() {
   // Every entry baked and browser-checked as things stand now: its markers hold the current
   // fingerprints (scripts/fingerprint.mjs, with the options formatted as build.sh passes them).
   const { fingerprints } = await import(pathToFileURL(path.join(W, "scripts/fingerprint.mjs")).href);
-  const { leanOptions } = await import(pathToFileURL(path.join(W, "site/scripts/stage.mjs")).href);
-  const opts = Object.entries(leanOptions()).map(([k, v]) => "-D" + k + "=" + v).join(",");
+  const { workerOptions } = await import(pathToFileURL(path.join(W, "site/scripts/stage.mjs")).href);
+  const opts = Object.entries(workerOptions()).map(([k, v]) => "-D" + k + "=" + v).join(",");
   const current = new Map(fingerprints({ out, runtime, qed64, opts }).map((f) => [f.entry, f]));
   const marker = (name, kind) => { try { return fs.readFileSync(path.join(out, "check/browser", `.${name}.${kind}`), "utf8").trim(); } catch { return null; } };
   for (const e of plan.entries) {
