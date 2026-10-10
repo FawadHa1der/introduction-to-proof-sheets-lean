@@ -9,9 +9,9 @@
 // - the goal requests for the holes run at most two at a time (QED64 answers at most six
 //   requests at once, and the extension fans out one per hole);
 // - every request for an older version of the text is dropped when it returns;
-// - the document's symbols (the editor's completions) are asked for once per version, when
-//   Lean is idle: in Lean 4.34 the request waits for the whole file, and the extension sends
-//   one per keystroke.
+// - the document's declarations (the editor's completions) are read from the text, once per
+//   version, not asked of Lean (src/declarations.ts: Verso's documentSymbol handler overflows a
+//   Worker's stack on long sheets on this runtime).
 import {
   BrowserMessageReader,
   BrowserMessageWriter,
@@ -20,6 +20,7 @@ import {
 } from "vscode-jsonrpc/browser";
 import { InputAreaStatus, Severity, type OffsetDiagnostic } from "@impermeable/waterproof-editor";
 import { TextDocument, comparePos, intersects, type Position, type Range } from "./text-document";
+import { declarationsOf } from "./declarations";
 
 export interface LeanDiagnostic {
   range: Range;
@@ -163,21 +164,15 @@ export class LeanClient {
     this.isBusy = processing.length > 0;
     for (const f of this.onStatus) f({ busy: this.isBusy, statuses: null });
     this.scheduleInputAreaStatus();
-    if (!this.isBusy) void this.updateCompletions(doc);
+    if (!this.isBusy) this.updateCompletions(doc);
   }
 
-  /** The document's symbols as completions (LspClient.updateCompletions). */
-  private async updateCompletions(doc: TextDocument): Promise<void> {
+  /** The document's declarations as completions (LspClient.updateCompletions asks Lean's
+   * textDocument/documentSymbol; this page reads them from the text: src/declarations.ts says why). */
+  private updateCompletions(doc: TextDocument): void {
     if (this.symbolsVersion === doc.version) return;
     this.symbolsVersion = doc.version;
-    let symbols: { name: string; detail?: string; children?: unknown[] }[] | null;
-    try {
-      symbols = await this.connection.sendRequest("textDocument/documentSymbol", { textDocument: { uri: doc.uri } }) as typeof symbols;
-    } catch {
-      return; // superseded by an edit (ContentModified): the next idle asks again
-    }
-    if (doc !== this.doc || doc.version !== this.symbolsVersion || !symbols) return;
-    this.editor.handleCompletions(symbols.map((sym) => ({ label: sym.name, detail: sym.detail?.toLowerCase() ?? "", type: "variable", template: sym.name })));
+    this.editor.handleCompletions(declarationsOf(doc.getText()).map((d) => ({ label: d.name, detail: d.kind, type: "variable", template: d.name })));
   }
 
   // --- exercise holes ------------------------------------------------------------------------
