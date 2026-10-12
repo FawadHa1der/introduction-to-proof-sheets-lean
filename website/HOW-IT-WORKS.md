@@ -261,7 +261,11 @@ finished.
 If Lean crashes, QED64 restarts it, after the same 1.5 s settle, and the Checker makes that new
 Lean boot the open sheet's environment (not the one the relay remembers from the last switch,
 which the student may have left). After three crashes (or failed starts) within two minutes it
-stops, and the page says so; opening another sheet, editing, or a reload starts it again. One
+stops, and the page says so; opening another sheet, editing, or a reload starts it again. From the
+QED64 version with the stack backstop on (HARDENING #72; the site is ready for it, not yet pinned),
+a death from running out of the browser's stack pauses checking at once instead: the page says
+"Checking paused", a QED64 note marks the line Lean was checking, and the next edit (or another
+sheet) checks again. One
 such crash was systematic and is gone: the page used to ask Lean for the document's symbols
 (for completions) after every check, and Verso's handler for that request walks every command of
 the document in Lean's interpreter, which on L07 (~50 commands) overflowed a Worker's stack and

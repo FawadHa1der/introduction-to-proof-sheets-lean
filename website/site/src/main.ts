@@ -235,8 +235,15 @@ function bootIdle(): void { ui.boot.hidden = true; }
 
 function onRelay(s: RelayStatus): void {
   if (s.relay === "halted") {
-    setStatus("Lean stopped", "bad");
-    notice("Lean crashed repeatedly on this sheet and was stopped. Edit the sheet or open another one to start it again, or reload the page.", "bad");
+    // QED64 pauses checking after Lean runs out of the browser's stack (from the QED64 pin that
+    // classifies the death, HARDENING #72; its note marks the line); else repeated crashes.
+    if (s.lastDeath?.cause?.code === "ENGINE_STACK_OVERFLOW") {
+      setStatus("Checking paused", "bad");
+      notice("Lean ran out of the browser's stack while checking this sheet, so checking is paused. The proof may still be correct: a browser gives Lean far less stack than desktop Lean has. Edit the sheet to check it again.", "bad");
+    } else {
+      setStatus("Lean stopped", "bad");
+      notice("Lean crashed repeatedly on this sheet and was stopped. Edit the sheet or open another one to start it again, or reload the page.", "bad");
+    }
     return;
   }
   if (s.relay === "rebooting") {
