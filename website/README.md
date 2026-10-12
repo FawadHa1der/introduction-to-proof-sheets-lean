@@ -11,8 +11,9 @@ Lean's, message for message. The build checks that for every sheet with the brow
 Node (below). **In Chrome, on the current toolchain release, this holds for only about half the
 sheets**: the others show extra "the WebAssembly runtime's stack is exhausted" errors, because a
 Chrome Worker gives Lean far less stack than Node does, and the release's stack guard is tuned
-too cautiously for it. The Lean fork's next runtime fixes that (Requests, below);
-`--lanes chrome-check` measures it.
+too cautiously for it. This is a lasting limit of the in-browser checker on the current runtime:
+no fix is planned (Requests, below), and closing it would take a new runtime or more engine
+stack. `--lanes chrome-check` measures it.
 
 **[HOW-IT-WORKS.md](HOW-IT-WORKS.md)** explains the process step by step: how the build turns
 the course into 13 Lean environments and checks them, how they are published and fetched, and
@@ -282,10 +283,12 @@ Done in this site, and better done upstream:
   errors in Chrome, where a Worker has ~500 KiB of engine stack. The guard probes the engine
   stack only every 16th `checkSystem`, so it must keep a wide reserve (16384 slots); QED64 main's
   interim of 8192 halves the errors but lets L02.1 and L08.1 overflow and kill Lean (measured),
-  and no value between is safe. The fix is the Lean fork's kernel patch 0038 (a guard by
-  recursion depth), with native exports for the core functions the interpreter now runs (see
-  the next item). Adopting it means a new toolchain release and a rebake of every snapshot; its
-  acceptance test is `--lanes chrome-check`: 28/28 equal to native, no Lean death.
+  and no value between is safe. **No fix is planned** (2026-10-12): the Lean fork's stack work
+  (kernel patch 0038: a guard by recursion depth, native exports for the core functions the
+  interpreter runs) is on hold, and QED64 will only catch stack *deaths* (below). Closing the
+  gap would be a new decision: a runtime with such a guard, or more engine stack per Worker,
+  then a new toolchain release and a rebake of every snapshot. Its acceptance test is
+  `--lanes chrome-check`: 28/28 equal to native, no Lean death.
 - **Lean options**: the site patches its staged copy of QED64's `lean.worker.js` to pass the
   course's lakefile `leanOptions` as `-D` flags (`site/scripts/stage.mjs` `workerOptions`; the
   patch must apply exactly once). QED64 should take options per session. QED64 plans to pass
@@ -311,9 +314,11 @@ Done in this site, and better done upstream:
   commands (L07) the request overflowed a Chrome Worker's stack and killed Lean on every new
   version of the text; three deaths stop Lean. The page therefore does not ask for
   `documentSymbol` (its completions come from the text, `site/src/declarations.ts`); with that,
-  the Chrome check sees no death. The kernel's fixes: native exports for such core functions,
-  and patch 0038's guard turning the overflow into a Lean error. The crash record says only
-  "Uncaught [object ErrorEvent]" and should carry the error text.
+  the Chrome check sees no death. For stack deaths that remain possible (very deep proofs),
+  QED64 is adding a backstop: the death is classified (`ENGINE_STACK_OVERFLOW`), the relay
+  pauses after the first one instead of rebooting into it three times, a QED64 note marks the
+  line Lean was checking, and an edit resumes. The site takes it when it moves to that QED64
+  (then `stage.mjs`'s patch of the worker's command line must follow QED64's new form).
 - **Snapshot caching**: a stored region is recognised by its size and first bytes, not its
   sha256; the browser's HTTP cache does not keep a 324 MB snapshot, so an evicted environment is
   downloaded again; and since baking is not byte-deterministic, a rebake of an unchanged entry

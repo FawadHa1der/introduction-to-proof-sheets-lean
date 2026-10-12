@@ -179,9 +179,11 @@ check.
    in all, 19 on L07; `--lanes chrome-check`, 2026-10-10), and the build's own browser check,
    run under Node with its larger stack, does not see them. Students' proofs meet the same
    limit: in QED64's measurements 5 nested `have … := by` blocks already give the error, and a
-   25-long `<;>` chain or 25 nested `have`s kill Lean. The Lean fork's kernel patch 0038 (a
-   guard by recursion depth) fixes it; it needs a new toolchain release and a rebake. The
-   runtime's default guard is the right one for these sheets: QED64 main's worker lowers it
+   25-long `<;>` chain or 25 nested `have`s kill Lean. This is a lasting limit of the in-browser
+   checker on the current runtime: no fix is planned (2026-10-12); closing it would take a new
+   runtime (a guard by recursion depth, the Lean fork's kernel patch 0038, on hold) or more
+   engine stack, a new toolchain release and a rebake. The runtime's default guard is the right
+   one for these sheets: QED64 main's worker lowers it
    (8192), which in Chrome lets L02.1 and L08.1 overflow and kill Lean, so `stage.mjs` refuses
    a QED64 worker that sets it.
 
