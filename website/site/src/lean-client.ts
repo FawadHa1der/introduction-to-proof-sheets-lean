@@ -28,6 +28,7 @@ export interface LeanDiagnostic {
   severity?: number;
   message: string;
   source?: string;
+  code?: string | number;
   isSilent?: boolean;
   leanTags?: number[];
 }
@@ -47,6 +48,8 @@ export interface EditorSink {
 
 const UNSOLVED_GOALS = 1; // LeanTag.UnsolvedGoals
 const SORRY_PREFIX = "declaration uses ";
+const STACK_PAUSE = "ENGINE_STACK_OVERFLOW";
+const STACK_PAUSE_NOTE = "Lean ran out of the browser's stack while checking this sheet, at this line or further down, so checking is paused. A browser gives Lean far less stack than desktop Lean has, so the proof may still be correct. Edit the sheet to check it again.";
 
 function toSeverity(s: number | undefined): Severity {
   switch (s) {
@@ -135,8 +138,13 @@ export class LeanClient {
     const areas = this.inputAreas(doc);
     // The extension's rewrite: an unsolved goal inside a hole is "not finished yet", not a
     // wall of goals (LeanLspClient.rewriteDiagnostics).
+    // QED64's pause note (HARDENING #72) sits on the first range of the last fileProgress: with
+    // Lean's default Elab.async (stage.mjs) that is the earliest declaration still being checked,
+    // so the overflow is there or further down, not necessarily "here".
     this.diagnostics = p.diagnostics.map((d) =>
-      d.leanTags?.includes(UNSOLVED_GOALS) && areas.some((a) => intersects(a, d.range))
+      d.source === "QED64" && d.code === STACK_PAUSE
+        ? { ...d, message: STACK_PAUSE_NOTE }
+        : d.leanTags?.includes(UNSOLVED_GOALS) && areas.some((a) => intersects(a, d.range))
         ? { ...d, message: "(Sub)proof is not finished yet." } : d);
     for (const f of this.onDiagnostics) f({ ...p, diagnostics: this.diagnostics });
     this.editor.setActiveDiagnostics(this.diagnostics.filter((d) => !d.isSilent).map((d) => ({

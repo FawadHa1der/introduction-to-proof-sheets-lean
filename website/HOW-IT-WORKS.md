@@ -175,8 +175,9 @@ check.
 8. **The stack, in Chrome.** A Chrome Worker gives Lean about 500 KiB of engine stack, far less
    than native Lean or Node has. The release's runtime guards it cautiously and reports "maximum
    recursion depth has been reached: the WebAssembly runtime's stack is exhausted" where a proof
-   needs more: in Chrome, 16 of the 28 sheets get such errors on proofs that check natively (53
-   in all, 19 on L07; `--lanes chrome-check`, 2026-10-10), and the build's own browser check,
+   needs more: in Chrome, 15–16 of the 28 sheets get such errors on proofs that check natively
+   (51–53 in all, 19 on L07; `--lanes chrome-check`, 2026-10-10 and 2026-10-12), and the build's
+   own browser check,
    run under Node with its larger stack, does not see them. Students' proofs meet the same
    limit: in QED64's measurements 5 nested `have … := by` blocks already give the error, and a
    25-long `<;>` chain or 25 nested `have`s kill Lean. This is a lasting limit of the in-browser
@@ -261,11 +262,12 @@ finished.
 If Lean crashes, QED64 restarts it, after the same 1.5 s settle, and the Checker makes that new
 Lean boot the open sheet's environment (not the one the relay remembers from the last switch,
 which the student may have left). After three crashes (or failed starts) within two minutes it
-stops, and the page says so; opening another sheet, editing, or a reload starts it again. From the
-QED64 version with the stack backstop on (HARDENING #72; the site is ready for it, not yet pinned),
-a death from running out of the browser's stack pauses checking at once instead: the page says
-"Checking paused", a QED64 note marks the line Lean was checking, and the next edit (or another
-sheet) checks again. One
+stops, and the page says so; opening another sheet, editing, or a reload starts it again. A
+death from running out of the browser's stack (QED64's backstop, HARDENING #72) pauses checking
+at once instead: the page says
+"Checking paused", a QED64 note marks a line (with Lean's default `Elab.async`, the earliest
+declaration still being checked, so the overflow is there or further down; the page's note says
+so), and the next edit (or another sheet) checks again. One
 such crash was systematic and is gone: the page used to ask Lean for the document's symbols
 (for completions) after every check, and Verso's handler for that request walks every command of
 the document in Lean's interpreter, which on L07 (~50 commands) overflowed a Worker's stack and

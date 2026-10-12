@@ -34,6 +34,7 @@ rclone lsf "$REMOTE:$BUCKET/lean4-wasm64/$RID/release.json" >/dev/null 2>&1 \
 
 ( cd "$SITE" && npm run -s build:site )
 # Digest-named regions first, the index last: a page never sees an index naming a missing region.
-rclone copy $DRY --exclude index.json "$OUT/staging/snapshots" "$REMOTE:$BUCKET/${PREFIX}snapshots"
+# (QED64's per-build index copies and the bake's lock file stay home: this page reads neither.)
+rclone copy $DRY --exclude index.json --exclude 'index.*.json' --exclude '*.lock' "$OUT/staging/snapshots" "$REMOTE:$BUCKET/${PREFIX}snapshots"
 rclone copyto $DRY "$INDEX" "$REMOTE:$BUCKET/${PREFIX}snapshots/index.json"
 if [ -n "$DRY" ]; then (cd "$SITE" && npx --yes "$WRANGLER" deploy --dry-run); else (cd "$SITE" && npx --yes "$WRANGLER" deploy); fi

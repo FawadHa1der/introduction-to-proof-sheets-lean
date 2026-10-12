@@ -323,10 +323,11 @@ lane_bake() {
   fi
   [ "$PLAN" = 1 ] && { note "then, per entry of $plan: bake, browser-check its sheets against out/check/native434, delete the raw region"; return 0; }
   # Two markers per entry hold what its bake and its check depended on (scripts/fingerprint.mjs):
-  # .<entry>.baked the compiled overlay, runtime and QED64; .<entry>.ok that, the worker's
-  # options, the staged snapshot, its sheets' text and native messages. A sheet edit or an
-  # option change re-checks without a rebake.
-  fingerprint() { node "$W/scripts/fingerprint.mjs" --out "$OUT" --runtime "$RUNTIME" --qed64 "$QED64_PIN" --opts "$WORKER_OPTS_CSV" --entry "$1" | cut -f"$2"; }
+  # .<entry>.baked the compiled overlay, runtime and bake runner; .<entry>.ok that, QED64, the worker's
+  # options, the staged snapshot, its sheets' text and native messages. A sheet edit, an option
+  # change or a new QED64 re-checks without a rebake.
+  fingerprint() { node "$W/scripts/fingerprint.mjs" --out "$OUT" --runtime "$RUNTIME" --qed64 "$QED64_PIN" \
+    --runner "${QED64_RUNNER:-$QED64_DIR/pipeline/snapshot/node-runner.mjs}" --opts "$WORKER_OPTS_CSV" --entry "$1" | cut -f"$2"; }
   # inflate <name>: the staged snapshot back into bake-work/<name>.snap, for a check without a bake.
   inflate() {
     local file; file="$(node -p 'require("path").basename(require(process.argv[1]).snapshots.find((e) => e.name === process.argv[2]).url)' "$OUT/staging/snapshots/index.json" "$1")"

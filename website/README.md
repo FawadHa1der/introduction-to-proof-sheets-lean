@@ -58,7 +58,7 @@ restarts). This README is the reference: what is where, requirements, commands.
 - **Toolchain.** The Lean fork's release `lean-v4.34.0-e1a79c1` (runtime
   `wasm64-f69cca24d0878a58`): the WebAssembly Lean, its native compiler (`native64`, the one
   that compiled the release's Mathlib), and the Lean and Mathlib oleans as packs.
-- **QED64** (`github:FawadHa1der/QED64#8c461a8`, the site's npm dependency): the library that
+- **QED64** (`github:FawadHa1der/QED64#62a06e2`, the site's npm dependency): the library that
   boots that runtime in a page and runs Lean's FileWorker on it, and the snapshot pipeline.
 - **The forks**, each a branch off upstream (`sources.json`):
   - `verso`: upstream Verso v4.34.0 plus pimotte's Waterproof changes (`:::multilean`,
@@ -84,7 +84,7 @@ restarts). This README is the reference: what is where, requirements, commands.
 | Every sheet natively on 4.34: errors only at the (empty) holes | `check-native` | 28/28 (L08's Example 4.3.4 fails on 4.31 too: `expected/known-issues.json`) |
 | Every sheet's messages on 4.34 = on native Lean 4.31 with the unported libraries | manual (recipe below) | 28/28 identical (severity, position, text) |
 | Every sheet through the browser's FileWorker **under Node** = native 4.34, message by message | `bake` | 28/28 identical |
-| Every sheet **in Chrome** (headless Chromium 151, fresh load) = native 4.34 | `chrome-check` | 12/28 identical, 0 Lean deaths (2026-10-10); the other 16 have extra "stack is exhausted" errors (53 in all; L07 has 19), and which ones vary a little between runs |
+| Every sheet **in Chrome** (headless Chromium 151, fresh load) = native 4.34 | `chrome-check` | 12–13/28 identical, 0 Lean deaths (2026-10-10 on QED64 8c461a8, 2026-10-12 on 62a06e2); the others have extra "stack is exhausted" errors (51–53 in all; L07 has 19), and a few sheets flip between runs |
 | The page in a browser: boot, editing, hole status, goal panel, environment switch, saved work | manual (below) | passed, on the dev server and on the production build |
 
 Each snapshot holds the environment of one *ordered* import closure: Lean adds modules in a
@@ -315,10 +315,10 @@ Done in this site, and better done upstream:
   version of the text; three deaths stop Lean. The page therefore does not ask for
   `documentSymbol` (its completions come from the text, `site/src/declarations.ts`); with that,
   the Chrome check sees no death. For stack deaths that remain possible (very deep proofs),
-  QED64 is adding a backstop: the death is classified (`ENGINE_STACK_OVERFLOW`), the relay
-  pauses after the first one instead of rebooting into it three times, a QED64 note marks the
-  line Lean was checking, and an edit resumes. The site takes it when it moves to that QED64
-  (then `stage.mjs`'s patch of the worker's command line must follow QED64's new form).
+  QED64 (from 62a06e2, HARDENING #72) has a backstop: the death is classified
+  (`ENGINE_STACK_OVERFLOW`), the relay pauses after the first one instead of rebooting into it
+  three times, a QED64 note marks the line Lean was checking, the page says "Checking paused",
+  and an edit or another sheet resumes.
 - **Snapshot caching**: a stored region is recognised by its size and first bytes, not its
   sha256; the browser's HTTP cache does not keep a 324 MB snapshot, so an evicted environment is
   downloaded again; and since baking is not byte-deterministic, a rebake of an unchanged entry

@@ -15,6 +15,7 @@
 // Exit 0 when the sheet's elaboration finished (progress drained) and the JSON was written;
 // 1 on a budget overrun, an abort or a runtime failure. It is not a verdict on the sheet.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { createRequire } from "node:module";
@@ -140,10 +141,15 @@ function onMessage(msg) {
   }
 }
 const CAP = 64 << 20;
+// The page's thread setup, read from the pinned lean.worker.js (absent in pins before QED64's
+// HARDENING #69): the task manager's size cap and the parked dedicated threads.
+let WORKERS_MAX = 0, PARKED = null;
 {
   const src = fs.readFileSync(path.join(qed64, "public/workers/lean.worker.js"), "utf8");
   const m = /const RESIDENT_RING_CAP = (\d+) << (\d+);/.exec(src);
   if (!m || (Number(m[1]) << Number(m[2])) !== CAP) throw new Error("browser-check: ring size differs from lean.worker.js RESIDENT_RING_CAP");
+  WORKERS_MAX = Number(/const LEAN_WORKERS_MAX = (\d+);/.exec(src)?.[1] ?? 0);
+  PARKED = /const PARKED_DEDICATED = "(\d+)";/.exec(src)?.[1] ?? null;
 }
 let ring = null;
 const IDX = { READ: 0, WRITE: 1, CLOSED: 2, WAKE: 3 };
@@ -203,6 +209,7 @@ globalThis.Module = {
     FS.writeFile("/workspace/" + path.basename(sheet), TEXT);
     globalThis.Module.ENV.LEAN_PATH = "/lib/lean";
     globalThis.Module.ENV.LEAN_SYSROOT = "/";
+    if (PARKED !== null) globalThis.Module.ENV.LEAN_WASM_PARKED_DEDICATED = PARKED; // at preRun, where getenv reads it
     FS.chdir("/workspace");
   }],
   onRuntimeInitialized() {
@@ -210,7 +217,8 @@ globalThis.Module = {
     M._lean_initialize_runtime_module();
     M._lean_initialize();
     M._lean_io_mark_end_initialization();
-    if (M._lean_init_task_manager) M._lean_init_task_manager();
+    if (WORKERS_MAX && M._lean_init_task_manager_using) M._lean_init_task_manager_using(Math.max(1, Math.min(os.availableParallelism(), WORKERS_MAX)));
+    else if (M._lean_init_task_manager) M._lean_init_task_manager();
     if (M._lean_enable_initializer_execution) M._lean_enable_initializer_execution();
     M._lean_init_search_path();
     M._lean_wasm_shell_mark_preinitialized();

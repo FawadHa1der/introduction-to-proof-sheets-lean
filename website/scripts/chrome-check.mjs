@@ -74,13 +74,14 @@ try {
     const t0 = Date.now();
     await page.goto(new URL(`?sheet=${encodeURIComponent(s.id)}`, BASE).href);
     // Checked, on a serving relay, with nothing pending: the final state for this text.
-    let state = null;
+    let state = null, maxRunning = -1;
     while (Date.now() - t0 < CAP_MS) {
       state = await page.evaluate(() => {
         const p = globalThis.__proofsheets;
         const st = p?.checker?.relay?.status();
-        return { pill: document.getElementById("status")?.textContent ?? "", relay: st?.relay ?? null };
+        return { pill: document.getElementById("status")?.textContent ?? "", relay: st?.relay ?? null, running: st?.pool?.running ?? -1 };
       }).catch(() => null);
+      maxRunning = Math.max(maxRunning, state?.running ?? -1); // the pool under Lean's default Elab.async (stage.mjs workerOptions)
       if (state?.pill === "Checked" && state.relay === "serving") break;
       if (state?.relay === "halted") break;
       await page.waitForTimeout(250);
@@ -89,7 +90,8 @@ try {
     if (checkedAt !== null) await page.waitForTimeout(SETTLE_MS);
     const final = await page.evaluate(() => {
       const p = globalThis.__proofsheets;
-      return { text: p.doc.getText(), diagnostics: p.client.diagnostics, relay: p.checker.relay.status(), deaths: p.checker.relay.stats.workerDeaths };
+      const r = p.checker.relay;
+      return { text: p.doc.getText(), diagnostics: p.client.diagnostics, relay: r.status(), deaths: r.stats.workerDeaths, stackPauses: r.stats.stackPauses ?? 0 };
     });
     await page.close();
     const text = fs.readFileSync(path.join(W, "site/public", s.path), "utf8");
@@ -97,12 +99,16 @@ try {
     const chrome = asNative(final.diagnostics, text);
     const native = JSON.parse(fs.readFileSync(path.join(NATIVE, `${s.id}.json`), "utf8")).messages;
     const onlyChrome = difference(chrome, native), onlyNative = difference(native, chrome);
-    const deaths = final.deaths + (final.relay.relay === "halted" ? 1 : 0);
+    // A halt is not a death of its own: a stack pause (HARDENING #72) is one counted death, the breaker three.
+    const deaths = final.deaths;
+    const cause = final.relay.lastDeath?.cause ? { code: final.relay.lastDeath.cause.code, line: final.relay.lastDeath.cause.line ?? null } : null;
+    const pool = { maxRunning: Math.max(maxRunning, final.relay.pool?.running ?? -1), grown: final.relay.pool?.grown ?? null };
     const ok = checkedAt !== null && final.relay.relay === "serving" && deaths === 0 && !onlyChrome.length && !onlyNative.length;
     fs.writeFileSync(path.join(OUT, `${s.id}.json`), JSON.stringify({ sheet: s.id, rc: ok ? 0 : 1, seconds: checkedAt, runtime: "Chrome (website/scripts/chrome-check.mjs)", messages: chrome }, null, 1));
-    results.push({ sheet: s.id, ok, checkedSeconds: checkedAt, deaths, relay: final.relay.relay, onlyChrome, onlyNative, stackErrors: errors.filter((e) => /Maximum call stack/.test(e)).length });
+    results.push({ sheet: s.id, ok, checkedSeconds: checkedAt, deaths, relay: final.relay.relay, onlyChrome, onlyNative, stackPauses: final.stackPauses, cause, pool, pageErrors: errors.length });
     console.log(`${ok ? "✓" : "✗"} ${s.id}: ${checkedAt === null ? "never Checked" : `${checkedAt.toFixed(1)} s`}` +
-      `${deaths ? `, ${deaths} Lean death(s)` : ""}${onlyChrome.length || onlyNative.length ? `, ${onlyChrome.length} only in Chrome, ${onlyNative.length} only native` : ""}`);
+      `${deaths ? `, ${deaths} Lean death(s)` : ""}${cause && deaths ? ` (${cause.code}${cause.line !== null ? ` at line ${cause.line + 1}` : ""})` : ""}` +
+      `${final.stackPauses ? `, checking paused (stack)` : ""}${pool.grown ? `, thread pool grew ${pool.grown}× (max ${pool.maxRunning} running)` : ""}${onlyChrome.length || onlyNative.length ? `, ${onlyChrome.length} only in Chrome, ${onlyNative.length} only native` : ""}`);
     for (const m of onlyChrome) console.log(`    + ${m.line}:${m.col} ${m.text.split("\n")[0].slice(0, 140)}`);
     for (const m of onlyNative) console.log(`    - ${m.line}:${m.col} ${m.text.split("\n")[0].slice(0, 140)}`);
   }

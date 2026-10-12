@@ -15,7 +15,7 @@
   },
   "qed64": {
     "repo": "https://github.com/FawadHa1der/QED64",
-    "commit": "8c461a869b03388c12d7ff68d83a4c621cfb728c",
+    "commit": "62a06e2632b56931b077bdadd751bac23f000919",
     "note": "the site's npm pin (website/site/package.json) and the bake/probe pipeline"
   },
   "prebuilt": {

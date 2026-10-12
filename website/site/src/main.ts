@@ -55,7 +55,10 @@ function setStatus(text: string, kind: "" | "ok" | "busy" | "bad" = ""): void {
   ui.status.textContent = text;
   ui.status.className = `pill ${kind}`;
 }
+/** The notice on screen is the halted relay's (onRelay clears only that one when Lean serves again). */
+let relayNotice = false;
 function notice(html: string | null, kind: "" | "bad" = ""): void {
+  relayNotice = false;
   ui.notice.hidden = html === null;
   ui.notice.className = `notice ${kind}`;
   if (html !== null) ui.notice.innerHTML = html;
@@ -235,6 +238,11 @@ function bootIdle(): void { ui.boot.hidden = true; }
 
 function onRelay(s: RelayStatus): void {
   if (s.relay === "halted") {
+    // Both notices ask for an edit or another sheet, so never leave them behind the start-up
+    // card (a halt can come before the first "elaborating"); the dead session's busy markers go.
+    bootIdle();
+    firstReady = true;
+    editor.removeBusyIndicators();
     // QED64 pauses checking after Lean runs out of the browser's stack (from the QED64 pin that
     // classifies the death, HARDENING #72; its note marks the line); else repeated crashes.
     if (s.lastDeath?.cause?.code === "ENGINE_STACK_OVERFLOW") {
@@ -244,6 +252,7 @@ function onRelay(s: RelayStatus): void {
       setStatus("Lean stopped", "bad");
       notice("Lean crashed repeatedly on this sheet and was stopped. Edit the sheet or open another one to start it again, or reload the page.", "bad");
     }
+    relayNotice = true;
     return;
   }
   if (s.relay === "rebooting") {
@@ -259,7 +268,8 @@ function onRelay(s: RelayStatus): void {
     case "headerRefused": setStatus("Imports not available", "bad"); bootIdle(); break;
     case "dead": setStatus("Lean stopped", "bad"); break;
   }
-  if (s.lastDeath && s.relay === "serving") notice(null);
+  // Only the halted relay's own notice: openSheet's ("this sheet was updated…") stays.
+  if (relayNotice && s.relay === "serving") notice(null);
 }
 
 async function startLean(): Promise<void> {
@@ -284,7 +294,9 @@ async function startLean(): Promise<void> {
     return;
   }
   client = new LeanClient(checker.relay.clientPort, editorSink);
-  client.onStatus.add(({ busy }) => { if (busy) setStatus("Checking…", "busy"); });
+  // Only a serving Lean is "checking": the client's hole-status timer reports busy after a death
+  // too, and must not cover "Checking paused", "Lean stopped" or a restart's label.
+  client.onStatus.add(({ busy }) => { if (busy && checker?.relay.state.kind === "serving") setStatus("Checking…", "busy"); });
   client.open(doc); // first: it sends `initialize`, whose answer the InfoView waits for
   infoview.attach(client);
 }

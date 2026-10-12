@@ -21,6 +21,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -103,12 +104,13 @@ async function pack() {
   const { fingerprints } = await import(pathToFileURL(path.join(W, "scripts/fingerprint.mjs")).href);
   const { workerOptions } = await import(pathToFileURL(path.join(W, "site/scripts/stage.mjs")).href);
   const opts = Object.entries(workerOptions()).map(([k, v]) => "-D" + k + "=" + v).join(",");
-  const current = new Map(fingerprints({ out, runtime, qed64, opts }).map((f) => [f.entry, f]));
+  const runner = process.env.QED64_RUNNER ?? path.join(path.dirname(createRequire(path.join(W, "site/package.json")).resolve("qed64/package.json")), "pipeline/snapshot/node-runner.mjs");
+  const current = new Map(fingerprints({ out, runtime, qed64, runner, opts }).map((f) => [f.entry, f]));
   const marker = (name, kind) => { try { return fs.readFileSync(path.join(out, "check/browser", `.${name}.${kind}`), "utf8").trim(); } catch { return null; } };
   for (const e of plan.entries) {
     if (!names.has(e.name)) die(`plan entry ${e.name} is not baked`);
     const f = current.get(e.name);
-    if (marker(e.name, "baked") !== f?.bake) die(`plan entry ${e.name}: its snapshot is not baked from the current overlay, runtime, QED64 and options (run the bake lane)`);
+    if (marker(e.name, "baked") !== f?.bake) die(`plan entry ${e.name}: its snapshot is not baked from the current overlay, runtime and bake runner (run the bake lane)`);
     if (marker(e.name, "ok") !== f?.check) die(`plan entry ${e.name}: its sheets were not browser-checked as they are now (run the check-native and bake lanes)`);
   }
   if (!names.has("init")) die("no init snapshot");
@@ -195,7 +197,8 @@ async function fetchAll() {
   // Snapshots of an earlier prebuilt (or bake) that this index does not name, and partial files.
   const snaps = path.join(out, "staging/snapshots"), listed = new Set(record.files.map((f) => f.name));
   for (const name of fs.readdirSync(snaps)) {
-    if ((name.endsWith(".snapz") && !listed.has(name)) || name.endsWith(".part")) fs.rmSync(path.join(snaps, name), { force: true });
+    // (and QED64's per-build index copies and lock, which only an earlier bake here would have left)
+    if ((name.endsWith(".snapz") && !listed.has(name)) || name.endsWith(".part") || /^index\.wasm64-[0-9a-f]{16}\.json$|^index\.json\.lock$/.test(name)) fs.rmSync(path.join(snaps, name), { force: true });
   }
   const missing = await unserved(JSON.parse(fs.readFileSync(path.join(out, "plan/entries.json"), "utf8")));
   if (missing.length) console.error(`prebuilt: warning: no environment was made for the imports of ${missing.join(", ")}: they get the nearest one (publish again after a full build)`);

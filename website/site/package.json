@@ -26,7 +26,7 @@
     "@impermeable/waterproof-editor": "0.18.1",
     "@leanprover/infoview": "0.11.1",
     "@leanprover/infoview-api": "0.11.0",
-    "qed64": "github:FawadHa1der/QED64#8c461a869b03388c12d7ff68d83a4c621cfb728c",
+    "qed64": "github:FawadHa1der/QED64#62a06e2632b56931b077bdadd751bac23f000919",
     "vscode-jsonrpc": "8.2.1",
     "@lezer/highlight": "^1.2.3"
   },
