@@ -62,7 +62,7 @@ restarts). This README is the reference: what is where, requirements, commands.
   compiler (`native64`, the one that compiled the release's Mathlib), and the Lean and Mathlib
   oleans as packs. A build made for an earlier release must be redone for it:
   `website/adopt-runtime.sh` (below).
-- **QED64** (`github:FawadHa1der/QED64#62a06e2`, the site's npm dependency): the library that
+- **QED64** (`github:FawadHa1der/QED64#37ff491`, the site's npm dependency): the library that
   boots that runtime in a page and runs Lean's FileWorker on it, and the snapshot pipeline.
 - **The forks**, each a branch off upstream (`sources.json`):
   - `verso`: upstream Verso v4.34.0 plus pimotte's Waterproof changes (`:::multilean`,
@@ -190,8 +190,9 @@ in to the repository, uploads ~3.8 GB as a GitHub release and pins it in `source
 ## Adopting the pinned toolchain release
 
 The branch pins `lean-v4.34.0-53cb11e`. A build made for the previous release (`website/out` from
-before 2026-10-16) does not match it until it is redone, so the dev server's Lean will not start
-on it. One command redoes everything that depends on the release and checks the result:
+before 2026-10-16) still holds that release's runtime and snapshots: the dev server keeps serving
+them (on the old, slower runtime), and `site/scripts/deploy.sh` refuses to deploy them against
+the new pin. One command redoes everything that depends on the release and checks the result:
 
 ```bash
 website/adopt-runtime.sh
