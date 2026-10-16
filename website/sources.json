@@ -2,10 +2,10 @@
   "schema": "proof-sheets.sources/v1",
   "note": "Every input of the website build besides the course itself. Forks are an upstream commit plus the patch series in website/patches/<name>/ (git am); build.sh's sources lane clones and patches them into website/forks/<name> and refuses a checkout whose tree differs. Dependencies are unmodified upstream commits, cloned into website/out/src/<name>.",
   "release": {
-    "id": "lean-v4.34.0-e1a79c1",
-    "digest": "sha256:bd71636b04dca47a1ecbb3c1d5beaca47576e4750cc51105543c346d5b5cebcd",
-    "runtime": "wasm64-f69cca24d0878a58",
-    "from": "https://github.com/FawadHa1der/lean4/releases/download/lean-v4.34.0-e1a79c1/",
+    "id": "lean-v4.34.0-53cb11e",
+    "digest": "sha256:61628fa465239409d490a6317357cc3d88f4b92a21a2c052ab5a7cbf220afbc6",
+    "runtime": "wasm64-5650321f3f58aeb0",
+    "from": "https://github.com/FawadHa1der/lean4/releases/download/lean-v4.34.0-53cb11e/",
     "packs": [
       "lean-core",
       "lean-lib",

@@ -31,9 +31,10 @@
 #   fetch         instead of compile..bake: the prebuilt snapshots and plan that
 #                 scripts/publish-prebuilt.sh published (sources.json prebuilt), verified
 #   site          the web page (website/site): stage, type-check, vite build
-#   chrome-check  (not in the default lanes) every sheet in real Chrome on a running dev or
-#                 preview server (CHROME_CHECK_URL, default http://localhost:5197/), held against
-#                 out/check/native434 (scripts/chrome-check.mjs; Playwright's Chromium:
+#   chrome-check  (not in the default lanes) every sheet in real Chrome, held against
+#                 out/check/native434 (scripts/chrome-check.mjs): on CHROME_CHECK_URL if set (a running
+#                 dev or preview server), else on a preview server of the built page that the lane
+#                 starts and stops itself (Playwright's Chromium:
 #                 npx --prefix website/site playwright install chromium-headless-shell)
 #
 # Environment:
@@ -390,10 +391,25 @@ lane_site() {
 
 # ----------------------------------------------------------------------------- chrome-check --
 lane_chrome_check() {
-  local url="${CHROME_CHECK_URL:-http://localhost:5197/}"
-  say "chrome-check: every sheet in Chrome on $url, against native Lean"
-  [ "$PLAN" = 1 ] || curl -sf -o /dev/null "${url%/}/sheets/index.json" || die "no site at $url: start npm --prefix website/site run dev (or preview) first, or set CHROME_CHECK_URL"
-  run node "$W/scripts/chrome-check.mjs" --url "$url"
+  local url="${CHROME_CHECK_URL:-}" server="" rc=0
+  say "chrome-check: every sheet in Chrome, against native Lean"
+  if [ "$PLAN" = 1 ]; then run node "$W/scripts/chrome-check.mjs" --url "${url:-http://localhost:5317/}"; return 0; fi
+  if [ -z "$url" ]; then
+    # No server given: serve the built page (the site lane's dist/) with the build's runtime and
+    # snapshots on a spare port for the check, and stop it afterwards.
+    [ -f "$W/site/dist/index.html" ] || die "no website/site/dist: run the site lane first, or set CHROME_CHECK_URL to a running dev or preview server"
+    url="http://localhost:5317/"
+    (cd "$W/site" && exec node node_modules/vite/bin/vite.js preview --port 5317 --strictPort) > "$OUT/logs/chrome-check-server.log" 2>&1 &
+    server=$!
+    for _ in $(seq 1 60); do curl -sf -o /dev/null "${url}sheets/index.json" && break; sleep 1; done
+  fi
+  if ! curl -sf -o /dev/null "${url%/}/sheets/index.json"; then
+    [ -z "$server" ] || kill "$server" 2>/dev/null
+    die "no site at $url: start npm --prefix website/site run dev (or preview) first, or leave CHROME_CHECK_URL unset"
+  fi
+  node "$W/scripts/chrome-check.mjs" --url "$url" || rc=$?
+  [ -z "$server" ] || kill "$server" 2>/dev/null
+  return $rc
 }
 
 lane_on sources && lane_sources

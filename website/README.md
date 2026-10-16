@@ -36,6 +36,7 @@ restarts). This README is the reference: what is where, requirements, commands.
 |---|---|
 | `HOW-IT-WORKS.md` | The process: build, publish, and what the page does when a sheet is opened or switched. |
 | `build.sh` | The whole build, in lanes (`--help`); `--prebuilt` for the quick path. |
+| `adopt-runtime.sh` | Adopting the pinned toolchain release: the full build, then the Chrome check. |
 | `sources.json` | Every pin: the toolchain release, QED64, the prebuilt environments, the forks (upstream commit + patches), the dependencies. |
 | `patches/<fork>/` | The forks as patch series (`git format-patch`), applied by the `sources` lane. |
 | `forks/` | The fork checkouts (gitignored; each its own git repo, rebuilt from `patches/`). |
@@ -55,9 +56,12 @@ restarts). This README is the reference: what is where, requirements, commands.
 
 ## The pieces
 
-- **Toolchain.** The Lean fork's release `lean-v4.34.0-e1a79c1` (runtime
-  `wasm64-f69cca24d0878a58`): the WebAssembly Lean, its native compiler (`native64`, the one
-  that compiled the release's Mathlib), and the Lean and Mathlib oleans as packs.
+- **Toolchain.** The Lean fork's release `lean-v4.34.0-53cb11e` (runtime
+  `wasm64-5650321f3f58aeb0`, kernel patch 0041: native WebAssembly exceptions, several times
+  faster than the previous release `lean-v4.34.0-e1a79c1`): the WebAssembly Lean, its native
+  compiler (`native64`, the one that compiled the release's Mathlib), and the Lean and Mathlib
+  oleans as packs. A build made for an earlier release must be redone for it:
+  `website/adopt-runtime.sh` (below).
 - **QED64** (`github:FawadHa1der/QED64#62a06e2`, the site's npm dependency): the library that
   boots that runtime in a page and runs Lean's FileWorker on it, and the snapshot pipeline.
 - **The forks**, each a branch off upstream (`sources.json`):
@@ -84,7 +88,7 @@ restarts). This README is the reference: what is where, requirements, commands.
 | Every sheet natively on 4.34: errors only at the (empty) holes | `check-native` | 28/28 (L08's Example 4.3.4 fails on 4.31 too: `expected/known-issues.json`) |
 | Every sheet's messages on 4.34 = on native Lean 4.31 with the unported libraries | manual (recipe below) | 28/28 identical (severity, position, text) |
 | Every sheet through the browser's FileWorker **under Node** = native 4.34, message by message | `bake` | 28/28 identical |
-| Every sheet **in Chrome** (headless Chromium 151, fresh load) = native 4.34 | `chrome-check` | 12–13/28 identical, 0 Lean deaths (2026-10-10 on QED64 8c461a8, 2026-10-12 on 62a06e2); the others have extra "stack is exhausted" errors (51–53 in all; L07 has 19), and a few sheets flip between runs |
+| Every sheet **in Chrome** (headless Chromium 151, fresh load) = native 4.34 | `chrome-check` | 15/28 identical, 0 Lean deaths on `lean-v4.34.0-53cb11e` (2026-10-16, a full build in a scratch clone); the others have extra "stack is exhausted" errors (42 in all; L07 has 18), and a few sheets flip between runs. On `e1a79c1`: 12–13/28, 51–53 errors |
 | The page in a browser: boot, editing, hole status, goal panel, environment switch, saved work | manual (below) | passed, on the dev server and on the production build |
 
 Each snapshot holds the environment of one *ordered* import closure: Lean adds modules in a
@@ -95,11 +99,15 @@ restarts Lean when the next sheet needs another entry (QED64 reports the header 
 `covered` for the 5 sheets whose import lines differ from the entry's but close over the same
 modules in the same order). HOW-IT-WORKS.md §1, §4 and §5 explain why.
 
-Measured on an Apple-silicon Mac (while other Lean jobs ran beside it):
+Measured on an Apple-silicon Mac (while other Lean jobs ran beside it), on the previous release
+`lean-v4.34.0-e1a79c1` unless marked. On `lean-v4.34.0-53cb11e` (2026-10-16, headless Chromium,
+local server) a sheet reaches "Checked" from a fresh load in 1.6–6.9 s (median 3.1 s, against
+10.9 s on `e1a79c1`; L07 6.9 s against 18.1 s), and the build's own check of a sheet takes 0.9 s
+(median) against 5.8 s.
 
 | | |
 |---|---|
-| Lean runtime, downloaded once | 160 MB |
+| Lean runtime, downloaded once | 106 MB on `53cb11e` (160 MB on `e1a79c1`) |
 | One environment, downloaded once | 225–324 MB (0.83–1.15 GB in the browser's cache) |
 | All 13 environments plus `init` | 3.8 GB to host |
 | First visit to a sheet (cold cache, local server) | 18 s in headless Chromium (2026-10-09); about 1 minute in a desktop browser under load (2026-10-08) |
@@ -179,6 +187,22 @@ in to the repository, uploads ~3.8 GB as a GitHub release and pins it in `source
 `--dry-run` first). **Until that has run,
 `--prebuilt` stops with a message, and the full build is the only way to get Lean in the page.**
 
+## Adopting the pinned toolchain release
+
+The branch pins `lean-v4.34.0-53cb11e`. A build made for the previous release (`website/out` from
+before 2026-10-16) does not match it until it is redone, so the dev server's Lean will not start
+on it. One command redoes everything that depends on the release and checks the result:
+
+```bash
+website/adopt-runtime.sh
+```
+
+It runs the full build below (about two hours, mostly rebaking the 14 snapshots for the new
+runtime), installs Playwright's Chromium, and runs the Chrome check of every sheet on a preview
+server it starts and stops itself, then prints what to publish and deploy next. Re-running it
+skips what is done. Expected on this release: 15/28 sheets equal to native Lean in Chrome, no
+Lean deaths.
+
 ## Full build
 
 ```bash
@@ -253,7 +277,7 @@ uploads it once for every site on that release. `--dry-run` shows what it would 
 account, bucket and remote are the site owner's; anyone else deploys to their own account under
 their own names (`deploy.sh`, `wrangler.toml`).
 
-The browser downloads Lean once (160 MB) and then each environment it needs once
+The browser downloads Lean once (106 MB) and then each environment it needs once
 (225–330 MB). It keeps the two most recent environments in its cache.
 
 ## When the course changes
@@ -269,18 +293,21 @@ The browser downloads Lean once (160 MB) and then each environment it needs once
   `scripts/fingerprint.mjs`) and bakes and checks the affected entries again.
 - **Upstream exports on Lean 4.31**: merge them into `website-v4.34`, port what 4.34 needs, and
   run the lanes above. `check-native` and the browser comparison catch what the port missed.
-- **A new toolchain release**: change `sources.json` (release and QED64 pins) and run every lane,
-  then `--lanes chrome-check`. Snapshots are paired with one runtime build; they are always
-  rebaked with it.
+- **A new toolchain release**: pin it (`sources.json` `release`: id, digest, runtime, from; and
+  `site/edge/lean4-wasm64-release.json` = the release's `release.json`, which the live Worker
+  routes `/runtime/` by), then run `website/adopt-runtime.sh`: the full build (every snapshot is
+  paired with one runtime build and rebaked for the new one), then the Chrome check of every
+  sheet. `lean-v4.34.0-53cb11e` is pinned this way; a build made before it needs that one run.
 - **After any rebake**, publish the environments again (`scripts/publish-prebuilt.sh`) so that
   the quick path serves them; a sheet-text-only change needs no new publish.
 
 ## Requests to QED64 and the Lean fork
 
 Done in this site, and better done upstream:
-- **The Chrome stack budget** (the one that matters most): on the release's runtime
-  (wasm64-f69cca24d0878a58, kernel patch 0036) 16 of 28 sheets get extra "stack is exhausted"
-  errors in Chrome, where a Worker has ~500 KiB of engine stack. The guard probes the engine
+- **The Chrome stack budget** (the one that matters most): on `lean-v4.34.0-e1a79c1` (kernel
+  patch 0036) 15–16 of 28 sheets got extra "stack is exhausted" errors in Chrome, and on
+  `lean-v4.34.0-53cb11e` 13 of 28 still do (42 errors, mostly at Verbose's `We compute` and
+  `by computation` steps in worked examples), where a Worker has ~500 KiB of engine stack. The guard probes the engine
   stack only every 16th `checkSystem`, so it must keep a wide reserve (16384 slots); QED64 main's
   interim of 8192 halves the errors but lets L02.1 and L08.1 overflow and kill Lean (measured),
   and no value between is safe. **No fix is planned** (2026-10-12): the Lean fork's stack work

@@ -55,7 +55,7 @@ environment than native Lean gives them (section 5 shows how).
 A **snapshot** is not a memory image of a running Lean. It is one compacted region holding the
 state Lean has after importing the header (the environment and every extension's state), plus
 the list of modules whose `[init]` code must run again when it is loaded. It is tied to one
-build of the WebAssembly runtime (`wasm64-f69cca24d0878a58`). Every boot also loads `init`
+build of the WebAssembly runtime (`wasm64-5650321f3f58aeb0` for the pinned release). Every boot also loads `init`
 first: the snapshot of a file with no imports (Lean's `Init` library alone; 33 MB to download,
 122 MB inflated).
 
@@ -74,7 +74,7 @@ byte-deterministic, and every student would download it again). The two markers,
 | Lane | What it does | Why |
 |---|---|---|
 | `sources` | Clones the upstream Verso, WaterproofGenre, Verbose and waterproof-vscode at the commits in `sources.json` and applies `patches/<fork>/` (`git am`, fixed identity); refuses a checkout that is not exactly base + patches. Fetches the pinned dependencies (SubVerso, MD4Lean, Illuminate, Lean4-Cli, a shallow Mathlib) into `out/src/`. Installs the site's npm packages, QED64 among them. | The forks carry the ports to Lean 4.34 as reviewable patches; nothing comes from the author's machine. |
-| `release` | Fetches the toolchain release `lean-v4.34.0-e1a79c1` with its own tools, verified against the pinned digest: the WebAssembly runtime (kept in `out/release/mirror/runtime`, which the dev server serves), the native compiler `native64`, and the Lean and Mathlib oleans as packs, unpacked into a *fat* tree (to compile against) and a *slim* one (to bake from). | The browser runs exactly this runtime, and its Mathlib was compiled by exactly this compiler: the course's modules must be compiled by it too. |
+| `release` | Fetches the toolchain release `lean-v4.34.0-53cb11e` with its own tools, verified against the pinned digest: the WebAssembly runtime (kept in `out/release/mirror/runtime`, which the dev server serves), the native compiler `native64`, and the Lean and Mathlib oleans as packs, unpacked into a *fat* tree (to compile against) and a *slim* one (to bake from). | The browser runs exactly this runtime, and its Mathlib was compiled by exactly this compiler: the course's modules must be compiled by it too. |
 | `compile` | Compiles, in Docker (the compiler is linux/arm64), the 284 modules the packs do not have: Verso, SubVerso, MD4Lean, Illuminate, WaterproofGenre, Verbose, the course's `Customlib`, and three Mathlib modules the packs lack (`scripts/compile.py`, raw `lean -o`, no Lake). | The overlay the environments are made of. |
 | `check-native` | Checks that `Customlib/WeakInduction.lean` is still a verbatim copy of L07's preamble (`scripts/check-preambles.py`; L08 imports it), then elaborates every sheet with the native `lean`, in Docker like `compile` (`scripts/check-sheets.py`), with the course's `lakefile.toml` options. Every error must be in an exercise hole (the holes ship empty), except the known L08 issue (`expected/known-issues.json`). The messages are saved per sheet in `out/check/native434/`. | The reference the browser is held to. |
 | `plan` | Assembles the bake tree (slim packs + overlay) and groups the sheets by ordered import closure (`scripts/plan-entries.mjs` → `out/plan/entries.json`): 13 entries, each baked from its group's shortest import list. | One environment per distinct closure (section 1). |
@@ -146,7 +146,7 @@ check.
    guarantee does not hold for it. If that environment lacks one of the file's imports, Lean
    refuses the header and the page shows "Imports not available".)
 5. **Lean starts** in a Web Worker (QED64's `LspRelay` makes a `ResidentSession`):
-   - the runtime (`lean.js`, 49 MB, and `lean.wasm`, 110 MB) is fetched, or taken from the
+   - the runtime (`lean.wasm`, 106 MB, and its small `lean.js`) is fetched, or taken from the
      HTTP cache, and each chunk's sha256 checked;
    - a 64-bit WebAssembly memory is created (2 GiB to start, at most 6 GiB), `lean.wasm` is
      compiled, and 24 helper threads start;
@@ -175,9 +175,10 @@ check.
 8. **The stack, in Chrome.** A Chrome Worker gives Lean about 500 KiB of engine stack, far less
    than native Lean or Node has. The release's runtime guards it cautiously and reports "maximum
    recursion depth has been reached: the WebAssembly runtime's stack is exhausted" where a proof
-   needs more: in Chrome, 15–16 of the 28 sheets get such errors on proofs that check natively
-   (51–53 in all, 19 on L07; `--lanes chrome-check`, 2026-10-10 and 2026-10-12), and the build's
-   own browser check,
+   needs more: in Chrome, 13 of the 28 sheets get such errors on proofs that check natively on
+   the pinned release `lean-v4.34.0-53cb11e` (42 in all, 18 on L07, mostly at Verbose's
+   `We compute` and `by computation` steps; 15–16 sheets and 51–53 errors on `e1a79c1`;
+   `--lanes chrome-check`), and the build's own browser check,
    run under Node with its larger stack, does not see them. Students' proofs meet the same
    limit: in QED64's measurements 5 nested `have … := by` blocks already give the error, and a
    25-long `<;>` chain or 25 nested `have`s kill Lean. This is a lasting limit of the in-browser
@@ -278,7 +279,9 @@ instead; with that, the Chrome check of all 28 sheets saw no crash.
 
 Measured in a browser (headless Chromium 151, the dev server on the same machine, so downloads
 are much faster than over a network; the machine was busy with other work), from the selection
-to "Checked":
+to "Checked", on the previous release `lean-v4.34.0-e1a79c1`. The pinned `lean-v4.34.0-53cb11e`
+checks about three times faster: from a fresh load a sheet reaches "Checked" in a median 3.1 s
+against 10.9 s (L07 6.9 s against 18.1 s).
 
 | Switch | Lean restarts? | Time | Downloaded |
 |---|---|---|---|
