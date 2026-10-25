@@ -385,10 +385,9 @@ async function main(): Promise<void> {
   await startLean();
 }
 
-if (import.meta.env.DEV) {
-  // a handle for the browser checks (development builds only)
-  Object.assign(globalThis, { __proofsheets: { get doc() { return doc; }, get client() { return client; }, get checker() { return checker; }, get cursor() { return cursorOffset; }, editor, infoview } });
-}
+// A handle for the browser checks (scripts/chrome-check.mjs), in every build: the Chrome check
+// runs on the production build (a preview server) as well as on the dev server.
+Object.assign(globalThis, { __proofsheets: { get doc() { return doc; }, get client() { return client; }, get checker() { return checker; }, get cursor() { return cursorOffset; }, editor, infoview } });
 
 void main().catch((e) => {
   setStatus("Error", "bad");

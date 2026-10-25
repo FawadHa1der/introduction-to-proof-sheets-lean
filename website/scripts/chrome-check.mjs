@@ -90,10 +90,12 @@ try {
     if (checkedAt !== null) await page.waitForTimeout(SETTLE_MS);
     const final = await page.evaluate(() => {
       const p = globalThis.__proofsheets;
+      if (!p?.checker) return null;
       const r = p.checker.relay;
       return { text: p.doc.getText(), diagnostics: p.client.diagnostics, relay: r.status(), deaths: r.stats.workerDeaths, stackPauses: r.stats.stackPauses ?? 0 };
     });
     await page.close();
+    if (!final) die(`${s.id}: the page has no __proofsheets handle with a checker (a page built before the handle was in every build? rebuild it: --lanes site)`);
     const text = fs.readFileSync(path.join(W, "site/public", s.path), "utf8");
     if (final.text !== text) die(`${s.id}: the page shows other text than the sheet (saved work in the profile?)`);
     const chrome = asNative(final.diagnostics, text);
