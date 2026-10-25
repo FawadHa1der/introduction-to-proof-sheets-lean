@@ -5,7 +5,7 @@
 //
 // It opens each sheet with a fresh page load (a cold Lean, as on a student's first visit) on a
 // running dev or preview server, waits until the page shows "Checked" and a few seconds more,
-// and compares Lean's final messages with out/check/native434/<sheet>.json as compare-checks.py
+// and compares Lean's final messages with out/check/native/<sheet>.json as compare-checks.py
 // does (a multiset of severity, line, column, text). Any difference, any Lean death (a Worker
 // that overflowed its stack) or a sheet that never checks fails it.
 //
@@ -28,7 +28,7 @@ const BASE = arg("url", "http://localhost:5197/").replace(/\/?$/, "/");
 const OUT = path.resolve(arg("out", path.join(W, "out/check/chrome")));
 const CAP_MS = Number(arg("cap-s", "360")) * 1000;
 const SETTLE_MS = Number(arg("settle-s", "6")) * 1000;
-const NATIVE = path.join(W, "out/check/native434");
+const NATIVE = path.join(W, "out/check/native");
 
 let playwright;
 try {

@@ -2,10 +2,10 @@
   "schema": "proof-sheets.sources/v1",
   "note": "Every input of the website build besides the course itself. Forks are an upstream commit plus the patch series in website/patches/<name>/ (git am); build.sh's sources lane clones and patches them into website/forks/<name> and refuses a checkout whose tree differs. Dependencies are unmodified upstream commits, cloned into website/out/src/<name>.",
   "release": {
-    "id": "lean-v4.34.0-53cb11e",
-    "digest": "sha256:61628fa465239409d490a6317357cc3d88f4b92a21a2c052ab5a7cbf220afbc6",
-    "runtime": "wasm64-5650321f3f58aeb0",
-    "from": "https://github.com/FawadHa1der/lean4/releases/download/lean-v4.34.0-53cb11e/",
+    "id": "lean-v4.35.0-b081e7c",
+    "digest": "sha256:5450ccc080ec02cb659a11ef750d4771c155c4d21b62b831df766c1a953c69c7",
+    "runtime": "wasm64-36d7f415704473d9",
+    "from": "https://github.com/FawadHa1der/lean4/releases/download/lean-v4.35.0-b081e7c/",
     "packs": [
       "lean-core",
       "lean-lib",
@@ -15,7 +15,7 @@
   },
   "qed64": {
     "repo": "https://github.com/FawadHa1der/QED64",
-    "commit": "37ff491830c6e60e8b894c6ab7e86806c22149fd",
+    "commit": "c512c21eb1a85bf49f34b8b308385063da7d7a60",
     "note": "the site's npm pin (website/site/package.json) and the bake/probe pipeline"
   },
   "prebuilt": {
@@ -26,22 +26,22 @@
   "forks": {
     "verso": {
       "upstream": "https://github.com/leanprover/verso.git",
-      "base": "cad4b633e75ea769b851f12f9ca3b4f0dfcc625f",
-      "baseNote": "tag v4.34.0",
-      "branch": "waterproof-v4.34.0",
+      "base": "304b8561790c50222551c937ce02928df0d5b445",
+      "baseNote": "tag v4.35.0",
+      "branch": "waterproof-v4.35.0",
       "carries": "pimotte/verso error-option-fix-v4.31.0 (multilean, elabCommandsCore, ExplanationPlaceholder), ported"
     },
     "waterproof-genre": {
       "upstream": "https://github.com/impermeable/waterproof-genre.git",
       "base": "12ca11c9c0e5335d1cf8a2a540b90c127162134a",
       "baseNote": "feature/smaller-genre",
-      "branch": "website-v4.34"
+      "branch": "website-v4.35"
     },
     "verbose-lean4": {
       "upstream": "https://github.com/impermeable/verbose-lean4.git",
       "base": "692339b89c174fb25ae5f396234bee927e98c31f",
       "baseNote": "feature/more-induction",
-      "branch": "website-v4.34"
+      "branch": "website-v4.35"
     },
     "waterproof-vscode": {
       "upstream": "https://github.com/impermeable/waterproof-vscode.git",
@@ -53,7 +53,7 @@
   "deps": {
     "subverso": {
       "url": "https://github.com/leanprover/subverso.git",
-      "rev": "9b90b7f938d6169246325df002351014f49945ef"
+      "rev": "892d6dc520270b5fb8c1291dd1b131e8c16255ed"
     },
     "md4lean": {
       "url": "https://github.com/acmepjz/md4lean.git",
@@ -61,15 +61,15 @@
     },
     "illuminate": {
       "url": "https://github.com/leanprover/illuminate.git",
-      "rev": "a1a61c9678da010e958ed24cdfa6f635b85f172a"
+      "rev": "f77493ba242e94f518b125ef2e538cd4ab0ca678"
     },
     "lean4-cli": {
       "url": "https://github.com/leanprover/lean4-cli.git",
-      "rev": "e92c9f15fdfacc8536f31cfb3b7ad26c3c8cd204"
+      "rev": "c24fe6078c630e89b489bffe59b3e20ac30d12c8"
     },
     "mathlib4": {
       "url": "https://github.com/leanprover-community/mathlib4.git",
-      "rev": "5ed2965256430c3649e86755f9576b54eca72435",
+      "rev": "56a005855ea17e0b0958f73ec801ae140b0a1679",
       "shallow": true
     }
   }

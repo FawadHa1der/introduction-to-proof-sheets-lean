@@ -40,14 +40,15 @@ the same ones in another order:
 
 | Imports (after `WaterproofGenre`, `Verbose.English.All`) | Modules | Sheets |
 |---|---|---|
-| nothing else | 3,494 | L01.1, L01.2, L02.2 |
-| `Rational` | 3,495 | L02.3 |
-| `Integers` | 3,649 | L02.4, L02.6, L02.8 |
-| `Reals, Lists` (and the same closure from `Reals, Lists, Sets`) | 4,825 | L02.7, L03.1, L04.1–4 |
-| `Functions, Lists` (and from `Functions, Sets, Lists`) | 4,825 | L05.1, L05.2, L06.1–3 |
-| … 8 more | 3,513–4,828 | the rest |
+| nothing else | 3,546 | L01.1, L01.2, L02.2 |
+| `Rational` | 3,547 | L02.3 |
+| `Integers` | 3,701 | L02.4, L02.6, L02.8 |
+| `Reals, Lists` (and the same closure from `Reals, Lists, Sets`) | 4,883 | L02.7, L03.1, L04.1–4 |
+| `Functions, Lists` (and from `Functions, Sets, Lists`) | 4,883 | L05.1, L05.2, L06.1–3 |
+| … 8 more | 3,565–4,886 | the rest |
 
-(`out/plan/entries.json` lists all 13 with their sheets.) Each becomes one **snapshot entry**.
+(Module counts on Lean 4.35; 4.34's were 52–58 fewer, with the same 13 groups.
+`out/plan/entries.json` lists all 13 with their sheets.) Each becomes one **snapshot entry**.
 A sheet always gets the entry of exactly its own ordered closure, never a larger environment
 that also contains its imports: a larger one would give students' proofs a different
 environment than native Lean gives them (section 5 shows how).
@@ -55,9 +56,9 @@ environment than native Lean gives them (section 5 shows how).
 A **snapshot** is not a memory image of a running Lean. It is one compacted region holding the
 state Lean has after importing the header (the environment and every extension's state), plus
 the list of modules whose `[init]` code must run again when it is loaded. It is tied to one
-build of the WebAssembly runtime (`wasm64-5650321f3f58aeb0` for the pinned release). Every boot also loads `init`
-first: the snapshot of a file with no imports (Lean's `Init` library alone; 33 MB to download,
-122 MB inflated).
+build of the WebAssembly runtime (`wasm64-36d7f415704473d9` for the pinned release). Every boot also loads `init`
+first: the snapshot of a file with no imports (Lean's `Init` library alone; 32 MB to download,
+117 MB inflated).
 
 ## 2. The build
 
@@ -73,12 +74,12 @@ byte-deterministic, and every student would download it again). The two markers,
 
 | Lane | What it does | Why |
 |---|---|---|
-| `sources` | Clones the upstream Verso, WaterproofGenre, Verbose and waterproof-vscode at the commits in `sources.json` and applies `patches/<fork>/` (`git am`, fixed identity); refuses a checkout that is not exactly base + patches. Fetches the pinned dependencies (SubVerso, MD4Lean, Illuminate, Lean4-Cli, a shallow Mathlib) into `out/src/`. Installs the site's npm packages, QED64 among them. | The forks carry the ports to Lean 4.34 as reviewable patches; nothing comes from the author's machine. |
-| `release` | Fetches the toolchain release `lean-v4.34.0-53cb11e` with its own tools, verified against the pinned digest: the WebAssembly runtime (kept in `out/release/mirror/runtime`, which the dev server serves), the native compiler `native64`, and the Lean and Mathlib oleans as packs, unpacked into a *fat* tree (to compile against) and a *slim* one (to bake from). | The browser runs exactly this runtime, and its Mathlib was compiled by exactly this compiler: the course's modules must be compiled by it too. |
-| `compile` | Compiles, in Docker (the compiler is linux/arm64), the 284 modules the packs do not have: Verso, SubVerso, MD4Lean, Illuminate, WaterproofGenre, Verbose, the course's `Customlib`, and three Mathlib modules the packs lack (`scripts/compile.py`, raw `lean -o`, no Lake). | The overlay the environments are made of. |
-| `check-native` | Checks that `Customlib/WeakInduction.lean` is still a verbatim copy of L07's preamble (`scripts/check-preambles.py`; L08 imports it), then elaborates every sheet with the native `lean`, in Docker like `compile` (`scripts/check-sheets.py`), with the course's `lakefile.toml` options. Every error must be in an exercise hole (the holes ship empty), except the known L08 issue (`expected/known-issues.json`). The messages are saved per sheet in `out/check/native434/`. | The reference the browser is held to. |
+| `sources` | Clones the upstream Verso, WaterproofGenre, Verbose and waterproof-vscode at the commits in `sources.json` and applies `patches/<fork>/` (`git am`, fixed identity); refuses a checkout that is not exactly base + patches, unless it was made from other pins (a new Lean version) and holds no uncommitted work: that one is moved aside and made again. Fetches the pinned dependencies (SubVerso, MD4Lean, Illuminate, Lean4-Cli, a shallow Mathlib) into `out/src/`. Installs the site's npm packages, QED64 among them. | The forks carry the ports to Lean 4.34 (unchanged on 4.35) as reviewable patches; nothing comes from the author's machine. |
+| `release` | Fetches the toolchain release `lean-v4.35.0-b081e7c` with its own tools, verified against the pinned digest: the WebAssembly runtime (kept in `out/release/mirror/runtime`, which the dev server serves), the native compiler `native64`, and the Lean and Mathlib oleans as packs, unpacked into a *fat* tree (to compile against) and a *slim* one (to bake from). | The browser runs exactly this runtime, and its Mathlib was compiled by exactly this compiler: the course's modules must be compiled by it too. |
+| `compile` | Compiles, in Docker (the compiler is linux/arm64), the 287 modules the packs do not have: Verso, SubVerso, MD4Lean, Illuminate, WaterproofGenre, Verbose, the course's `Customlib`, and three Mathlib modules the packs lack (`scripts/compile.py`, raw `lean -o`, no Lake). `out/build` is stamped with the release id: another release's overlay is compiled again from scratch. | The overlay the environments are made of. |
+| `check-native` | Checks that `Customlib/WeakInduction.lean` is still a verbatim copy of L07's preamble (`scripts/check-preambles.py`; L08 imports it), then elaborates every sheet with the native `lean`, in Docker like `compile` (`scripts/check-sheets.py`), with the course's `lakefile.toml` options. Every error must be in an exercise hole (the holes ship empty), except the known L08 issue (`expected/known-issues.json`). The messages are saved per sheet in `out/check/native/`. | The reference the browser is held to. |
 | `plan` | Assembles the bake tree (slim packs + overlay) and groups the sheets by ordered import closure (`scripts/plan-entries.mjs` → `out/plan/entries.json`): 13 entries, each baked from its group's shortest import list. | One environment per distinct closure (section 1). |
-| `bake` | For `init` and every entry: QED64's `bake-snapshot.mjs` runs the WebAssembly runtime under Node, imports the entry's header, and writes the snapshot (`out/staging/snapshots/<name>.<digest>.snapz`, gzip; each entry 225–324 MB, 0.83–1.15 GB inflated) and its line in `index.json`. Then every sheet of the entry is elaborated **by the browser's own FileWorker under Node, in that snapshot** (`scripts/browser-check.mjs`), and its messages must equal native Lean's, message for message (`scripts/compare-checks.py`). | The browser's Lean must say what native Lean says. A sheet that differs stops the build. |
+| `bake` | For `init` and every entry: QED64's `bake-snapshot.mjs` runs the WebAssembly runtime under Node, imports the entry's header, and writes the snapshot (`out/staging/snapshots/<name>.<digest>.snapz`, gzip; each entry 223–321 MB, 0.83–1.14 GB inflated) and its line in `index.json`. Then every sheet of the entry is elaborated **by the browser's own FileWorker under Node, in that snapshot** (`scripts/browser-check.mjs`), and its messages must equal native Lean's, message for message (`scripts/compare-checks.py`). | The browser's Lean must say what native Lean says. A sheet that differs stops the build. |
 | `site` | Stages QED64's worker scripts (with the course's Lean options added to the FileWorker's command line), the InfoView, and the sheets with their catalogue (`site/scripts/stage.mjs`: title, exercises, imports, content hash, entry), type-checks, and builds the page with Vite. | |
 
 From a fresh clone (2026-10-09, Apple silicon) the lanes took: `sources` 23 s, `release`
@@ -89,9 +90,9 @@ messages, and 11 of the 14 snapshots byte for byte (the other 3 differ in about 
 baking is not byte-deterministic).
 
 A third check is run by hand, not by `build.sh` (`README.md`, the 4.31 baseline): every
-sheet's messages on 4.34 equal native Lean 4.31's with the course's original libraries. All
-three checks hold for all 28 sheets (`check-native` with L08's two known errors, which 4.31
-has too).
+sheet's messages on 4.34 equal native Lean 4.31's with the course's original libraries, and on
+4.35 they equal 4.34's (`scripts/compare-checks.py`, 2026-10-25). All three checks hold for all
+28 sheets (`check-native` with L08's two known errors, which 4.31 has too).
 
 ### Publishing, and the quick path
 
@@ -175,10 +176,10 @@ check.
 8. **The stack, in Chrome.** A Chrome Worker gives Lean about 500 KiB of engine stack, far less
    than native Lean or Node has. The release's runtime guards it cautiously and reports "maximum
    recursion depth has been reached: the WebAssembly runtime's stack is exhausted" where a proof
-   needs more: in Chrome, 13 of the 28 sheets get such errors on proofs that check natively on
-   the pinned release `lean-v4.34.0-53cb11e` (42 in all, 18 on L07, mostly at Verbose's
-   `We compute` and `by computation` steps; 15–16 sheets and 51–53 errors on `e1a79c1`;
-   `--lanes chrome-check`), and the build's own browser check,
+   needs more: in Chrome, 12 of the 28 sheets get such errors on proofs that check natively on
+   the pinned release `lean-v4.35.0-b081e7c` (38 in all, 18 on L07, mostly at Verbose's
+   `We compute` and `by computation` steps; 13 sheets and 42 errors on `lean-v4.34.0-53cb11e`,
+   15–16 sheets and 51–53 errors on `e1a79c1`; `--lanes chrome-check`), and the build's own browser check,
    run under Node with its larger stack, does not see them. Students' proofs meet the same
    limit: in QED64's measurements 5 nested `have … := by` blocks already give the error, and a
    25-long `<;>` chain or 25 nested `have`s kill Lean. This is a lasting limit of the in-browser
@@ -279,9 +280,10 @@ instead; with that, the Chrome check of all 28 sheets saw no crash.
 
 Measured in a browser (headless Chromium 151, the dev server on the same machine, so downloads
 are much faster than over a network; the machine was busy with other work), from the selection
-to "Checked", on the previous release `lean-v4.34.0-e1a79c1`. The pinned `lean-v4.34.0-53cb11e`
-checks about three times faster: from a fresh load a sheet reaches "Checked" in a median 3.1 s
-against 10.9 s (L07 6.9 s against 18.1 s).
+to "Checked", on the release `lean-v4.34.0-e1a79c1`. Its successors check about three times
+faster: from a fresh load a sheet reaches "Checked" in a median 3.1 s on `lean-v4.34.0-53cb11e`
+and 2.9–3.1 s on the pinned `lean-v4.35.0-b081e7c`, against 10.9 s (L07 6.9 s and 6.6 s against
+18.1 s).
 
 | Switch | Lean restarts? | Time | Downloaded |
 |---|---|---|---|
@@ -303,7 +305,7 @@ Walking the catalogue in order, 18 of the 27 steps change environment. A restart
 | Checking the sheet | 5.7–6.6 s (13 s for L07) |
 
 Over a real network, a first visit and a switch to an environment not yet cached add the part of
-the 225–324 MB download that the restart does not hide: the download starts at the switch, and
+the 223–321 MB download that the restart does not hide: the download starts at the switch, and
 the new Lean needs it about 6 s later. At 100 Mbit/s it takes 18–26 s, at 10 Mbit/s 3–4.3 min.
 
 ## 5. Why not fewer environments
@@ -325,7 +327,7 @@ three lemmas it has natively (`sum_icc_succ_top`, `sum_icc_zero_succ_top`,
 `sum_icc_zero_succ_sq`); no proof is known whose verdict this changes. Exact environments are
 what keeps a student's proof's verdict the same as in VS Code.
 
-The safest merge is of the five entries with the same 4,825 modules in different orders (15
+The safest merge is of the five entries with the same 4,883 modules in different orders (15
 sheets, which also share one Verbose configuration): it adds no modules and no memory.
 Natively, all 15 sheets give identical messages in one of those orders (`Reals, Lists`), and 18
 restarts in the walk become 14. It is still not exact by construction (instances and simp

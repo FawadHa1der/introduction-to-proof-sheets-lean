@@ -1,4 +1,4 @@
-// The proof-sheets page: the Waterproof editor showing a sheet's Verso file, Lean 4.34 in this
+// The proof-sheets page: the Waterproof editor showing a sheet's Verso file, Lean 4.35 in this
 // tab (QED64) checking that file as it is, and the Lean InfoView beside it.
 import "@impermeable/waterproof-editor/styles.css";
 import "@impermeable/waterproof-editor/waterproof-defaults.css";

@@ -9,7 +9,7 @@
 # website/out/prebuilt (scripts/prebuilt.mjs pack: every entry must have passed the bake lane's
 # browser check, and every sheet must have its entry), creates the release <tag> (default
 # website-prebuilt-<runtime>-<digest>) on the origin repository (PREBUILT_REPO=<owner>/<name>
-# to choose another) with the GitHub CLI (gh, logged in), uploads the files (~3.8 GB), and writes
+# to choose another) with the GitHub CLI (gh, logged in), uploads the files (~3.5 GB), and writes
 # the release URL and the digest of prebuilt.json into website/sources.json (prebuilt). Commit
 # sources.json afterwards. --dry-run packs and prints what it would do, and changes nothing else.
 set -euo pipefail

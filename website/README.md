@@ -2,13 +2,13 @@
 
 This folder turns the course's proof sheets into a website. Students open a sheet in the
 [Waterproof editor](https://github.com/impermeable/waterproof-editor), write their proofs in the
-exercise holes, and Lean 4.34 checks them **in the browser tab**: no installation, no server.
+exercise holes, and Lean 4.35 checks them **in the browser tab**: no installation, no server.
 
 It takes the *faithful* path: Lean receives each sheet's Verso file itself (`#doc (WaterproofGenre) … =>`, Markdown prose, `::::multilean` exercises with
 `:::input` holes), exactly as the VS Code extension sends it. It elaborates the file in the
 environment of exactly the sheet's imports, so that a sheet's messages in the browser are native
 Lean's, message for message. The build checks that for every sheet with the browser's Lean under
-Node (below). **In Chrome, on the current toolchain release, this holds for only about half the
+Node (below). **In Chrome, on the current toolchain release, this holds for only 16 of the 28
 sheets**: the others show extra "the WebAssembly runtime's stack is exhausted" errors, because a
 Chrome Worker gives Lean far less stack than Node does, and the release's stack guard is tuned
 too cautiously for it. This is a lasting limit of the in-browser checker on the current runtime:
@@ -21,7 +21,7 @@ what the page does when a student opens a sheet or switches to another (and why 
 restarts). This README is the reference: what is where, requirements, commands.
 
 ```
- Waterproof editor (ProseMirror)                      Lean 4.34 in a Web Worker (QED64, wasm64)
+ Waterproof editor (ProseMirror)                      Lean 4.35 in a Web Worker (QED64, wasm64)
  ┌─────────────────────────────────┐   full text     ┌──────────────────────────────────────────┐
  │ the sheet's .lean, as blocks    │ ──didChange───▶ │ resident FileWorker                      │
  │ squiggles · hole status · busy  │ ◀─diagnostics── │ environment: a baked snapshot of exactly │
@@ -45,7 +45,7 @@ restarts). This README is the reference: what is where, requirements, commands.
 | `scripts/plan-entries.mjs` | One snapshot entry per distinct environment (ordered import closure). |
 | `scripts/browser-check.mjs` | One sheet through the browser's own FileWorker under Node, as the page runs it. |
 | `scripts/chrome-check.mjs` | Every sheet in real Chrome against native Lean (`--lanes chrome-check`, on a running dev or preview server). |
-| `scripts/compare-checks.py` | Native versus browser (or 4.31 versus 4.34), message by message. |
+| `scripts/compare-checks.py` | Native versus browser, or one Lean version against another (4.31 against 4.34, 4.34 against 4.35), message by message. |
 | `scripts/fingerprint.mjs` | What each baked and checked entry depends on; the bake lane redoes an entry when it changes. |
 | `scripts/prebuilt.mjs`, `scripts/publish-prebuilt.sh` | The baked environments as a GitHub release, and the fetch lane that installs them. |
 | `expected/known-issues.json` | Course content issues that native Lean 4.31 has too (one, in L08). |
@@ -56,39 +56,41 @@ restarts). This README is the reference: what is where, requirements, commands.
 
 ## The pieces
 
-- **Toolchain.** The Lean fork's release `lean-v4.34.0-53cb11e` (runtime
-  `wasm64-5650321f3f58aeb0`, kernel patch 0041: native WebAssembly exceptions, several times
-  faster than the previous release `lean-v4.34.0-e1a79c1`): the WebAssembly Lean, its native
-  compiler (`native64`, the one that compiled the release's Mathlib), and the Lean and Mathlib
-  oleans as packs. A build made for an earlier release must be redone for it:
-  `website/adopt-runtime.sh` (below).
-- **QED64** (`github:FawadHa1der/QED64#37ff491`, the site's npm dependency): the library that
+- **Toolchain.** The Lean fork's release `lean-v4.35.0-b081e7c`: Lean 4.35.0 and Mathlib
+  v4.35.0 (`56a0058`), runtime `wasm64-36d7f415704473d9` (kernel patches through 0042; 0041's
+  native WebAssembly exceptions made the 4.34 runtime several times faster than
+  `lean-v4.34.0-e1a79c1`). It holds the WebAssembly Lean, its native compiler (`native64`, the
+  one that compiled the release's Mathlib), and the Lean and Mathlib oleans as packs. A build
+  made for an earlier release must be redone for it: `website/adopt-runtime.sh` (below).
+- **QED64** (`github:FawadHa1der/QED64#c512c21`, the site's npm dependency): the library that
   boots that runtime in a page and runs Lean's FileWorker on it, and the snapshot pipeline.
 - **The forks**, each a branch off upstream (`sources.json`):
-  - `verso`: upstream Verso v4.34.0 plus pimotte's Waterproof changes (`:::multilean`,
-    `elabCommandsCore`, the `error` flag), ported: upstream 4.34 parses code blocks in place.
+  - `verso`: upstream Verso v4.35.0 plus pimotte's Waterproof changes (`:::multilean`,
+    `elabCommandsCore`, the `error` flag), ported to 4.34 (upstream 4.34 parses code blocks in
+    place); the port applies unchanged to v4.35.0.
   - `waterproof-genre`: ported to that Verso; its goal panel imports only the ProofWidgets
     modules it uses (all in the release's Mathlib pack).
-  - `verbose-lean4`: ported to Mathlib v4.34.0. Mathlib 4.34 elaborates `s ⊆ t` on sets to
-    `s ≤ t`, so the help tactic had to learn that set inclusions are `≤` now. One fix is for the
-    browser only: Verbose's config extension built its imported state with a fold that recursed
-    once per imported module and overflowed the browser's stack (Mathlib + Verbose is ~3,500
-    modules); it is a loop now, with the same value.
+  - `verbose-lean4`: ported to Mathlib v4.34.0, and builds unchanged on v4.35.0. Mathlib 4.34
+    elaborates `s ⊆ t` on sets to `s ≤ t`, so the help tactic had to learn that set inclusions
+    are `≤` now. One fix is for the browser only: Verbose's config extension built its imported
+    state with a fold that recursed once per imported module and overflowed the browser's stack
+    (Mathlib + Verbose is ~3,500 modules); it is a loop now, with the same value.
   - `waterproof-vscode`: the source of the Lean file format the editor uses
     (`site/src/lean-format/`, copied verbatim, LGPL-2.1).
-- **The course** (this repository, branch `website-v4.34`): ported to Lean 4.34. Only
-  `Customlib/Sets.lean` changed (its type-as-set `⊆` rule hands the relation to Mathlib's new
-  elaborator), plus `Customlib/WeakInduction.lean`, a verbatim copy of L07's preamble that L08
-  now imports (a sheet with empty holes never compiles, so L08 could not import L07).
+- **The course** (this repository, branch `website-v4.35`): ported to Lean 4.34, and unchanged
+  on 4.35 (like the genre and Verbose patches: only the pins moved). Only `Customlib/Sets.lean`
+  changed (its type-as-set `⊆` rule hands the relation to Mathlib's new elaborator), plus
+  `Customlib/WeakInduction.lean`, a verbatim copy of L07's preamble that L08 now imports (a
+  sheet with empty holes never compiles, so L08 could not import L07).
 
 ## Faithfulness, and how it is checked
 
 | Check | Lane | Result |
 |---|---|---|
-| Every sheet natively on 4.34: errors only at the (empty) holes | `check-native` | 28/28 (L08's Example 4.3.4 fails on 4.31 too: `expected/known-issues.json`) |
-| Every sheet's messages on 4.34 = on native Lean 4.31 with the unported libraries | manual (recipe below) | 28/28 identical (severity, position, text) |
-| Every sheet through the browser's FileWorker **under Node** = native 4.34, message by message | `bake` | 28/28 identical |
-| Every sheet **in Chrome** (headless Chromium 151, fresh load) = native 4.34 | `chrome-check` | 15/28 identical, 0 Lean deaths on `lean-v4.34.0-53cb11e` (2026-10-16, a full build in a scratch clone); the others have extra "stack is exhausted" errors (42 in all; L07 has 18), and a few sheets flip between runs. On `e1a79c1`: 12–13/28, 51–53 errors |
+| Every sheet natively on 4.35: errors only at the (empty) holes | `check-native` | 28/28 (L08's Example 4.3.4 fails on 4.31 too: `expected/known-issues.json`) |
+| Every sheet's messages = on native Lean 4.31 with the unported libraries | manual (recipe below) | 28/28 identical (severity, position, text) on 4.34; on 4.35 every sheet's native messages equal 4.34's (`compare-checks.py`, 2026-10-25) |
+| Every sheet through the browser's FileWorker **under Node** = native 4.35, message by message | `bake` | 28/28 identical |
+| Every sheet **in Chrome** (headless Chromium, fresh load) = native 4.35 | `chrome-check` | 16/28 identical, 0 Lean deaths on `lean-v4.35.0-b081e7c` (2026-10-25, a full build in a scratch clone; two runs, the same result sheet for sheet); the other 12 have extra "stack is exhausted" errors (38 in all; L07 has 18). On `lean-v4.34.0-53cb11e`: 15/28, 42 errors, a few sheets flipping between runs; on `e1a79c1`: 12–13/28, 51–53 errors |
 | The page in a browser: boot, editing, hole status, goal panel, environment switch, saved work | manual (below) | passed, on the dev server and on the production build |
 
 Each snapshot holds the environment of one *ordered* import closure: Lean adds modules in a
@@ -99,23 +101,24 @@ restarts Lean when the next sheet needs another entry (QED64 reports the header 
 `covered` for the 5 sheets whose import lines differ from the entry's but close over the same
 modules in the same order). HOW-IT-WORKS.md §1, §4 and §5 explain why.
 
-Measured on an Apple-silicon Mac (while other Lean jobs ran beside it), on the previous release
-`lean-v4.34.0-e1a79c1` unless marked. On `lean-v4.34.0-53cb11e` (2026-10-16, headless Chromium,
-local server) a sheet reaches "Checked" from a fresh load in 1.6–6.9 s (median 3.1 s, against
-10.9 s on `e1a79c1`; L07 6.9 s against 18.1 s), and the build's own check of a sheet takes 0.9 s
-(median) against 5.8 s.
+Measured on an Apple-silicon Mac (while other Lean jobs ran beside it), on the release
+`lean-v4.34.0-e1a79c1` unless marked. On the pinned `lean-v4.35.0-b081e7c` (2026-10-25, headless
+Chromium, the built page on a local preview server) a sheet reaches "Checked" from a fresh load in
+1.6–6.6 s (median 2.9–3.1 s; L07 6.6 s). On `lean-v4.34.0-53cb11e` (2026-10-16) it was 1.6–6.9 s
+(median 3.1 s, against 10.9 s on `e1a79c1`; L07 6.9 s against 18.1 s), and the build's own check
+of a sheet took 0.9 s (median) against 5.8 s.
 
 | | |
 |---|---|
-| Lean runtime, downloaded once | 106 MB on `53cb11e` (160 MB on `e1a79c1`) |
-| One environment, downloaded once | 225–324 MB (0.83–1.15 GB in the browser's cache) |
-| All 13 environments plus `init` | 3.8 GB to host |
+| Lean runtime, downloaded once | 106 MB on `b081e7c` and `53cb11e` (160 MB on `e1a79c1`) |
+| One environment, downloaded once | 223–321 MB on `b081e7c` (0.83–1.14 GB in the browser's cache) |
+| All 13 environments plus `init` | 3.5 GB to host on `b081e7c` (3.8 GB on 4.34) |
 | First visit to a sheet (cold cache, local server) | 18 s in headless Chromium (2026-10-09); about 1 minute in a desktop browser under load (2026-10-08) |
 | Opening a sheet again (warm cache) | 14 s (reload, headless); 10–30 s in a desktop browser, most of it waiting for the previous tab's Lean to stop |
 | Switching to a sheet of the same environment | 1.6 s (L04.1 → L04.2): no restart |
 | Switching to a sheet of another environment | 13.6–15.1 s: a Lean restart (~8 s) plus checking the sheet; over a network, a first visit to that environment also downloads 225–324 MB, starting at the switch (HOW-IT-WORKS.md §4) |
 | Checking a sheet once loaded (browser) | 4.7–13.8 s per sheet; natively, with the import, 6–15 s |
-| Browser tab memory, a sheet loaded and checked | 5.8 GB physical footprint with a 3,494-module environment, 6.0 GB with a 4,825-module one (macOS `footprint`; RSS 8.7–8.9 GB including reclaimable pages) |
+| Browser tab memory, a sheet loaded and checked | 5.8 GB physical footprint with a 3,494-module environment, 6.0 GB with a 4,825-module one (on 4.34; macOS `footprint`; RSS 8.7–8.9 GB including reclaimable pages) |
 
 The browser floor is a hard requirement for students: a desktop Chrome or Edge 133+ or Firefox
 134+ (WebAssembly Memory64), cross-origin isolation, and a tab that needs about 6 GB. A computer
@@ -131,7 +134,7 @@ cp Bewijzen/Customlib/WeakInduction.lean website/out/ref431/Bewijzen/Customlib/
 cp Bewijzen/L08_Strong_Induction/sheet1_strong_induction.lean website/out/ref431/Bewijzen/L08_Strong_Induction/
 (cd website/out/ref431 && lake exe cache get && lake build WaterproofGenre Bewijzen.Customlib Bewijzen.Customlib.WeakInduction)
 python3 website/scripts/check-sheets.py --repo website/out/ref431 --lean "$(cd website/out/ref431 && elan which lean)" --lean-path "$(cd website/out/ref431 && lake env printenv LEAN_PATH)" --out website/out/check/native431 --opts=-Dpp.unicode.fun=true,-DautoImplicit=false,-DrelaxedAutoImplicit=false
-python3 website/scripts/compare-checks.py website/out/check/native431 website/out/check/native434 --label-a 4.31 --label-b 4.34
+python3 website/scripts/compare-checks.py website/out/check/native431 website/out/check/native --label-a 4.31 --label-b 4.35
 ```
 
 ## Requirements
@@ -142,7 +145,7 @@ python3 website/scripts/compare-checks.py website/out/check/native431 website/ou
 | Tools | Node 24+, npm 10.8+, git, bash, tar | the same, plus python3 3.9+ and Docker that runs `linux/arm64` |
 | Disk | ~4 GB | ~16 GB in `out/` at the end of a full build (also its peak), on a filesystem with hard links; leave ~20 GB free for the Docker image and caches |
 | Memory | a browser tab needs ~6 GB | 16 GB; the Docker VM 8 GB or more (`JOBS=1` below that) |
-| Network | ~3.9 GB from GitHub (the runtime, 0.16 GB; the environments, 3.8 GB) and ~0.1 GB from npm | ~3.3 GB from GitHub and npm, plus the Ubuntu image the compiler's Docker image is built from |
+| Network | ~3.6 GB from GitHub (the runtime, 0.11 GB; the environments, 3.5 GB) and ~0.1 GB from npm | ~3.3 GB from GitHub and npm, plus the Ubuntu image the compiler's Docker image is built from |
 | Time | minutes | about two hours on Apple silicon (1 h 54 min measured from a fresh clone) |
 
 Nothing needs an account or a key: the toolchain release, the forks' upstreams, the
@@ -160,7 +163,7 @@ dependencies and QED64 are all public, and fetched over HTTPS by pinned commit o
 - **Docker mounts only the clone:** `website/out` must be a real directory inside it (not a
   symlink elsewhere), on a filesystem with hard links, and the clone's path must be one Docker
   shares (Docker Desktop: under your home directory by default).
-- **Lake and VS Code** do not work on this branch: `lean-toolchain` is Lean 4.34, but
+- **Lake and VS Code** do not work on this branch: `lean-toolchain` is Lean 4.35, but
   `lakefile.toml` still names the course's 4.31 libraries (the ported forks are patch series
   here, not published packages). The website build does not use Lake. To work on the sheets in
   VS Code, use the `main` branch.
@@ -168,7 +171,7 @@ dependencies and QED64 are all public, and fetched over HTTPS by pinned commit o
 ## Quick path: run the site without building it
 
 ```bash
-git clone -b website-v4.34 https://github.com/FawadHa1der/introduction-to-proof-sheets-lean
+git clone -b website-v4.35 https://github.com/FawadHa1der/introduction-to-proof-sheets-lean
 cd introduction-to-proof-sheets-lean
 website/build.sh --prebuilt
 npm --prefix website/site run dev
@@ -183,16 +186,17 @@ pins differ from the ones they were made from.
 
 The environments are published once per toolchain release and course change by
 `scripts/publish-prebuilt.sh` (after a full build, from a pushed commit; it needs `gh` logged
-in to the repository, uploads ~3.8 GB as a GitHub release and pins it in `sources.json`;
+in to the repository, uploads ~3.5 GB as a GitHub release and pins it in `sources.json`;
 `--dry-run` first). **Until that has run,
 `--prebuilt` stops with a message, and the full build is the only way to get Lean in the page.**
 
 ## Adopting the pinned toolchain release
 
-The branch pins `lean-v4.34.0-53cb11e`. A build made for the previous release (`website/out` from
-before 2026-10-16) still holds that release's runtime and snapshots: the dev server keeps serving
-them (on the old, slower runtime), and `site/scripts/deploy.sh` refuses to deploy them against
-the new pin. One command redoes everything that depends on the release and checks the result:
+The branch pins `lean-v4.35.0-b081e7c` (Lean 4.35). A build made for an earlier release
+(`website/out` from branch `website-v4.34`) still holds that release's compiled overlay, runtime
+and snapshots: the dev server keeps serving them (on the old Lean), and
+`site/scripts/deploy.sh` refuses to deploy them against the new pin. One command redoes
+everything that depends on the release and checks the result:
 
 ```bash
 website/adopt-runtime.sh
@@ -201,8 +205,14 @@ website/adopt-runtime.sh
 It runs the full build below (about two hours, mostly rebaking the 14 snapshots for the new
 runtime), installs Playwright's Chromium, and runs the Chrome check of every sheet on a preview
 server it starts and stops itself, then prints what to publish and deploy next. Re-running it
-skips what is done. Expected on this release: 15/28 sheets equal to native Lean in Chrome, no
+skips what is done. Expected on this release: 16/28 sheets equal to native Lean in Chrome, no
 Lean deaths.
+
+What an earlier release's build leaves behind is handled on the way: a fork checkout made from
+other pins is moved aside to `website/forks/<fork>.replaced-<time>` (delete it once you no longer
+need it) and made again, unless it has uncommitted changes (then the build stops and says so); a
+dependency checkout at another commit is fetched again; and the compiled overlay
+(`website/out/build`, stamped with the release id) is compiled again from scratch.
 
 ## Full build
 
@@ -211,7 +221,7 @@ website/build.sh
 ```
 
 The first run takes about two hours (1 h 54 min from a fresh clone, 2026-10-09): the release
-~10 min, Docker compiles 284 modules (~10 min), the native check ~2 min, and the 14 snapshot
+~10 min, Docker compiles 284 modules (~10 min; 287 on 4.35), the native check ~2 min, and the 14 snapshot
 bakes ~6 minutes each, with the browser check of the 28 sheets (~8 min) between them. Most of a
 bake is QED64's baker waiting 300 s for its process to exit (a request below). A fresh clone's
 build matches the author's: the same native messages, plan, compiled overlay and browser
@@ -279,7 +289,7 @@ account, bucket and remote are the site owner's; anyone else deploys to their ow
 their own names (`deploy.sh`, `wrangler.toml`).
 
 The browser downloads Lean once (106 MB) and then each environment it needs once
-(225–330 MB). It keeps the two most recent environments in its cache.
+(223–321 MB). It keeps the two most recent environments in its cache.
 
 ## When the course changes
 
@@ -292,13 +302,22 @@ The browser downloads Lean once (106 MB) and then each environment it needs once
   lane notices the change (each entry's markers hold fingerprints of the compiled modules, the
   runtime, QED64 and the Lean options, and of its sheets' text and their native messages:
   `scripts/fingerprint.mjs`) and bakes and checks the affected entries again.
-- **Upstream exports on Lean 4.31**: merge them into `website-v4.34`, port what 4.34 needs, and
+- **Upstream exports on Lean 4.31**: merge them into `website-v4.35`, port what 4.35 needs, and
   run the lanes above. `check-native` and the browser comparison catch what the port missed.
 - **A new toolchain release**: pin it (`sources.json` `release`: id, digest, runtime, from; and
   `site/edge/lean4-wasm64-release.json` = the release's `release.json`, which the live Worker
   routes `/runtime/` by), then run `website/adopt-runtime.sh`: the full build (every snapshot is
   paired with one runtime build and rebaked for the new one), then the Chrome check of every
-  sheet. `lean-v4.34.0-53cb11e` is pinned this way; a build made before it needs that one run.
+  sheet. `lean-v4.34.0-53cb11e` was pinned this way (a new runtime for the same Lean).
+- **A new Lean version** (4.34 to 4.35, 2026-10-25): besides the release, move `lean-toolchain`;
+  Verso's base to the matching upstream tag (`sources.json` `forks.verso`, re-exporting its patch
+  with `git format-patch`); the dependencies to that Verso's `lake-manifest.json` (SubVerso,
+  MD4Lean, Illuminate, Lean4-Cli); Mathlib to the release's commit (`mathlib.commit` in its
+  `release.json`); and QED64 to a commit that adopted the release (`sources.json` and
+  `site/package.json` with its lockfile, together). Keep a copy of `out/check/native` from the
+  previous version, run `website/adopt-runtime.sh`, then compare the two with
+  `scripts/compare-checks.py`: on 4.35 no sheet's native messages changed, and the genre and
+  Verbose patches applied and compiled unchanged.
 - **After any rebake**, publish the environments again (`scripts/publish-prebuilt.sh`) so that
   the quick path serves them; a sheet-text-only change needs no new publish.
 
@@ -306,9 +325,10 @@ The browser downloads Lean once (106 MB) and then each environment it needs once
 
 Done in this site, and better done upstream:
 - **The Chrome stack budget** (the one that matters most): on `lean-v4.34.0-e1a79c1` (kernel
-  patch 0036) 15–16 of 28 sheets got extra "stack is exhausted" errors in Chrome, and on
-  `lean-v4.34.0-53cb11e` 13 of 28 still do (42 errors, mostly at Verbose's `We compute` and
-  `by computation` steps in worked examples), where a Worker has ~500 KiB of engine stack. The guard probes the engine
+  patch 0036) 15–16 of 28 sheets got extra "stack is exhausted" errors in Chrome, on
+  `lean-v4.34.0-53cb11e` 13 of 28, and on `lean-v4.35.0-b081e7c` 12 of 28 still do (38 errors,
+  mostly at Verbose's `We compute` and `by computation` steps in worked examples), where a
+  Worker has ~500 KiB of engine stack. The guard probes the engine
   stack only every 16th `checkSystem`, so it must keep a wide reserve (16384 slots); QED64 main's
   interim of 8192 halves the errors but lets L02.1 and L08.1 overflow and kill Lean (measured),
   and no value between is safe. **No fix is planned** (2026-10-12): the Lean fork's stack work

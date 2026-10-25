@@ -2,7 +2,7 @@
   "name": "proof-sheets-site",
   "private": true,
   "version": "0.1.0",
-  "description": "The proof sheets of 'Bewijzen in de Wiskunde' in the browser: the Waterproof editor on Lean 4.34 compiled to WebAssembly (QED64).",
+  "description": "The proof sheets of 'Bewijzen in de Wiskunde' in the browser: the Waterproof editor on Lean 4.35 compiled to WebAssembly (QED64).",
   "license": "LGPL-2.1-only",
   "type": "module",
   "engines": {
@@ -26,7 +26,7 @@
     "@impermeable/waterproof-editor": "0.18.1",
     "@leanprover/infoview": "0.11.1",
     "@leanprover/infoview-api": "0.11.0",
-    "qed64": "github:FawadHa1der/QED64#37ff491830c6e60e8b894c6ab7e86806c22149fd",
+    "qed64": "github:FawadHa1der/QED64#c512c21eb1a85bf49f34b8b308385063da7d7a60",
     "vscode-jsonrpc": "8.2.1",
     "@lezer/highlight": "^1.2.3"
   },

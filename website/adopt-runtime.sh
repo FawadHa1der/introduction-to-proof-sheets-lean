@@ -42,7 +42,7 @@ node -e '
 
 cat <<EOF
 
-Adopted $RID. Expected on this release (measured 2026-10-16): 15/28 sheets equal to native in
-Chrome, about 42 "stack is exhausted" errors, no deaths; a few sheets flip between runs.
+Adopted $RID. Expected on this release (measured 2026-10-25, twice): 16/28 sheets equal to
+native in Chrome, 38 "stack is exhausted" errors, no deaths.
 Next: website/scripts/publish-prebuilt.sh, then website/site/scripts/deploy.sh (each has --dry-run).
 EOF

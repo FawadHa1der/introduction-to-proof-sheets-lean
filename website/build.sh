@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the proof-sheets website: the course on Lean 4.34 in the browser (QED64, the toolchain
+# Build the proof-sheets website: the course on Lean 4.35 in the browser (QED64, the toolchain
 # release's wasm64 runtime) with the Waterproof editor, faithfully: Lean elaborates each sheet's
 # Verso file itself, in an environment baked from exactly that sheet's imports.
 #
@@ -21,7 +21,7 @@
 #                 Verbose, the course's Customlib and the three Mathlib modules the packs lack,
 #                 compiled by the release's native compiler in Docker (scripts/compile.py)
 #   check-native  every sheet elaborated natively; errors only in exercise holes, apart from the
-#                 known content issues (expected/known-issues.json); out/check/native434/
+#                 known content issues (expected/known-issues.json); out/check/native/
 #   plan          the bake tree (slim packs + overlay) and the snapshot entries: one per distinct
 #                 ordered import closure (scripts/plan-entries.mjs → out/plan/entries.json)
 #   bake          the init snapshot and every entry, against the release's runtime; after each,
@@ -32,7 +32,7 @@
 #                 scripts/publish-prebuilt.sh published (sources.json prebuilt), verified
 #   site          the web page (website/site): stage, type-check, vite build
 #   chrome-check  (not in the default lanes) every sheet in real Chrome, held against
-#                 out/check/native434 (scripts/chrome-check.mjs): on CHROME_CHECK_URL if set (a running
+#                 out/check/native (scripts/chrome-check.mjs): on CHROME_CHECK_URL if set (a running
 #                 dev or preview server), else on a preview server of the built page that the lane
 #                 starts and stops itself (Playwright's Chromium:
 #                 npx --prefix website/site playwright install chromium-headless-shell)
@@ -141,13 +141,41 @@ site_deps() {
 GITX=(git -c core.hooksPath=/dev/null -c core.autocrlf=false -c core.eol=lf -c apply.whitespace=nowarn -c advice.detachedHead=false)
 GIT_AM=(env GIT_COMMITTER_NAME="proof-sheets build" GIT_COMMITTER_EMAIL=build@localhost
   "${GITX[@]}" -c user.name="proof-sheets build" -c user.email=build@localhost -c commit.gpgSign=false -c i18n.commitEncoding=UTF-8)
+# The tree a fork must have, computed in checkout <dir>: <base> with the patches applied.
+# fork_tree <dir> <base> [patch...]; fails when the base is not there or a patch does not apply.
+fork_tree() {
+  local dir="$1" base="$2" tmp t rc=0; shift 2
+  tmp="$(mktemp -d)"
+  t="$(cd "$dir" && GIT_INDEX_FILE="$tmp/i" git read-tree "$base" 2>/dev/null \
+    && for p in "$@"; do GIT_INDEX_FILE="$tmp/i" "${GITX[@]}" apply --cached "$p" || exit 1; done \
+    && GIT_INDEX_FILE="$tmp/i" git write-tree)" || rc=$?
+  rm -rf "$tmp"
+  [ "$rc" = 0 ] && echo "$t"
+}
 lane_sources() {
   say "sources: forks (upstream + patches), pinned dependencies, the site's npm packages"
-  local name upstream base want have
+  local name upstream base want have inputs
   for name in $(json ".forks && Object.keys(s.forks).join(' ')"); do
     upstream="$(json ".forks['$name'].upstream")"; base="$(json ".forks['$name'].base")"
     local dir="$W/forks/$name" patches=("$W"/patches/"$name"/*.patch)
     [ -e "${patches[0]}" ] || patches=()
+    # What a checkout is made from, recorded in it: the base and the patch series' contents.
+    inputs="$base $(cat ${patches[@]+"${patches[@]}"} </dev/null | git hash-object --stdin)"
+    if [ "$PLAN" = 0 ] && [ -e "$dir/.git" ] && [ "$(cat "$dir/.git/proof-sheets-inputs" 2>/dev/null || true)" != "$inputs" ]; then
+      # Made from other inputs (an earlier base or patch series: a new Lean version moves them),
+      # or by a build.sh that did not record them. Kept if its tree is the right one; else made
+      # again when it holds no uncommitted work, the old checkout moved aside, not deleted, so
+      # that commits of its own are kept.
+      if [ "$(fork_tree "$dir" "$base" ${patches[@]+"${patches[@]}"} || true)" = "$(git -C "$dir" rev-parse 'HEAD^{tree}')" ]; then
+        echo "$inputs" > "$dir/.git/proof-sheets-inputs"
+      elif [ -z "$(git -C "$dir" status --porcelain --untracked-files=all)" ]; then
+        local aside; aside="$dir.replaced-$(date +%Y%m%d-%H%M%S)"
+        mv "$dir" "$aside"
+        note "$name: website/forks/$name was made from other inputs; moved to website/forks/${aside##*/} (delete it when it is not needed) and made again"
+      else
+        die "$name: website/forks/$name was made from other inputs (an earlier base or patches) and has uncommitted changes: commit or discard them, or move the checkout away, to make it again"
+      fi
+    fi
     if [ ! -e "$dir/.git" ]; then
       # Made aside and moved into place when complete: an interrupted run leaves no half fork.
       [ "$PLAN" = 1 ] || [ ! -e "$dir" ] || rmdir "$dir" 2>/dev/null || die "website/forks/$name exists but is not a git checkout: delete it to re-create it from the patches"
@@ -157,15 +185,12 @@ lane_sources() {
       [ "$PLAN" = 1 ] || git -C "$dir.tmp" cat-file -e "$base^{commit}" 2>/dev/null || run "${GITX[@]}" -C "$dir.tmp" fetch -q origin "$base"
       run "${GITX[@]}" -C "$dir.tmp" checkout -q -b "$(json ".forks['$name'].branch")" "$base"
       [ ${#patches[@]} -eq 0 ] || run "${GIT_AM[@]}" -C "$dir.tmp" am -q --committer-date-is-author-date "${patches[@]}"
+      [ "$PLAN" = 1 ] || echo "$inputs" > "$dir.tmp/.git/proof-sheets-inputs"
       run mv "$dir.tmp" "$dir"
     fi
     [ "$PLAN" = 1 ] && continue
-    # The checkout must be exactly base + patches (an older port or a stray edit is refused).
-    local tmp; tmp="$(mktemp -d)"
-    want="$(cd "$dir" && GIT_INDEX_FILE="$tmp/i" git read-tree "$base" \
-      && for p in ${patches[@]+"${patches[@]}"}; do GIT_INDEX_FILE="$tmp/i" "${GITX[@]}" apply --cached "$p" || exit 1; done \
-      && GIT_INDEX_FILE="$tmp/i" git write-tree)" || { rm -rf "$tmp"; die "$name: the patches do not apply to $base"; }
-    rm -rf "$tmp"
+    # The checkout must be exactly base + patches (a stray edit is refused).
+    want="$(fork_tree "$dir" "$base" ${patches[@]+"${patches[@]}"})" || die "$name: the patches do not apply to $base"
     have="$(git -C "$dir" rev-parse 'HEAD^{tree}')"
     [ "$want" = "$have" ] || die "$name: website/forks/$name is not $base + website/patches/$name (tree ${have:0:12}, expected ${want:0:12}). Delete website/forks/$name to re-create it from the patches; if you changed the fork on purpose, commit and re-export the patches (git format-patch $base..HEAD)"
     # (untracked ones too: every .lean file in a fork's tree is compiled)
@@ -176,6 +201,12 @@ lane_sources() {
   for name in $(json ".deps && Object.keys(s.deps).join(' ')"); do
     url="$(json ".deps['$name'].url")"; rev="$(json ".deps['$name'].rev")"
     local dir="$OUT/src/$name"
+    if [ "$PLAN" = 0 ] && [ -e "$dir/.git" ] && [ "$(git -C "$dir" rev-parse HEAD)" != "$rev" ]; then
+      # Another pin's checkout (a new Lean version moves them): fetched again unless edited.
+      [ -z "$(git -C "$dir" status --porcelain --untracked-files=all)" ] || die "$name: website/out/src/$name is not at $rev and has local changes: discard them, or delete it, to fetch it again"
+      note "$name: out/src/$name is at another commit; fetching $rev"
+      rm -rf "$dir"
+    fi
     if [ ! -e "$dir/.git" ]; then
       [ "$PLAN" = 1 ] || [ ! -e "$dir" ] || rmdir "$dir" 2>/dev/null || die "website/out/src/$name exists but is not a git checkout: delete it to fetch it again"
       run rm -rf "$dir.tmp"
@@ -279,23 +310,36 @@ all_roots() {
   customlib="$(cd "$REPO" && ls Bewijzen/Customlib/*.lean | sed 's/\.lean$//; s#/#.#g' | paste -sd, -)"
   echo "WaterproofGenre,$verbose,Bewijzen.Customlib,$customlib"
 }
+# out/build holds this release's compiler's output, and out/build/fill hard-links this release's
+# Mathlib pack: it is stamped with the release id, and another release's (or an unstamped one) is
+# compiled again from scratch. Within a release, compile.py rebuilds only what changed.
+overlay_stamped() { stamped "$OUT/build/.release" "$([ -d "$OUT/build" ] && echo 1)"; }
+# The lanes that read the overlay need this release's.
+need_overlay() { [ "$PLAN" = 1 ] || overlay_stamped || die "website/out/build was not compiled for $RID: run the compile lane first (website/build.sh --lanes compile)"; }
 lane_compile() {
   say "compile: the olean overlay with the release's native compiler"
+  if [ "$PLAN" = 1 ] || ! overlay_stamped; then
+    run rm -rf "$OUT/build"
+    run mkdir -p "$OUT/build"
+    [ "$PLAN" = 1 ] || echo "$RID" > "$OUT/build/.release"
+  fi
   run "$W/scripts/overlay.sh" "$(all_roots)" -j "${JOBS:-3}" --heavy-jobs "$([ "${JOBS:-3}" -ge 2 ] && echo 2 || echo 1)"
 }
 
 # -------------------------------------------------------------------------- check-native --
 lane_check_native() {
   say "check-native: every sheet, natively (errors only in exercise holes)"
+  need_overlay
   run python3 "$W/scripts/check-preambles.py"
   run "$W/scripts/in-docker.sh" python3 "$W/scripts/check-sheets.py" --lean "$LEAN" \
-    --lean-path "$OUT/build/lib:$OUT/build/fill:$OUT/trees/fat" --out "$OUT/check/native434" \
+    --lean-path "$OUT/build/lib:$OUT/build/fill:$OUT/trees/fat" --out "$OUT/check/native" \
     --opts="$LEAN_OPTS_CSV" --known "$W/expected/known-issues.json" -j 2
 }
 
 # ---------------------------------------------------------------------------------- plan --
 lane_plan() {
   say "plan: the bake tree and one snapshot entry per distinct ordered import closure"
+  need_overlay
   run python3 "$W/scripts/bake-tree.py" "$OUT/trees/slim" "$OUT/build/lib" "$OUT/build/fill" "$OUT/bake-tree"
   run node "$W/scripts/plan-entries.mjs" --tree "$OUT/bake-tree" --out "$OUT/plan/entries.json"
 }
@@ -322,7 +366,7 @@ lane_bake() {
   if [ "$PLAN" = 1 ] || ! baked init; then
     bake init "#check (2 + 2 : Nat)"
   fi
-  [ "$PLAN" = 1 ] && { note "then, per entry of $plan: bake, browser-check its sheets against out/check/native434, delete the raw region"; return 0; }
+  [ "$PLAN" = 1 ] && { note "then, per entry of $plan: bake, browser-check its sheets against out/check/native, delete the raw region"; return 0; }
   # Two markers per entry hold what its bake and its check depended on (scripts/fingerprint.mjs):
   # .<entry>.baked the compiled overlay, runtime and bake runner; .<entry>.ok that, QED64, the worker's
   # options, the staged snapshot, its sheets' text and native messages. A sheet edit, an option
@@ -361,7 +405,7 @@ lane_bake() {
         --snap-dir "$OUT/bake-work" --snapshots "init,$name" --sheet "$file" --out "$OUT/check/browser/$s.json" ${opts[@]+"${opts[@]}"} \
         > "$OUT/logs/browser-$s.log" 2>&1 || { tail -5 "$OUT/logs/browser-$s.log"; ok=0; continue; }
       mkdir -p "$OUT/check/pair" && rm -f "$OUT/check/pair"/*.json
-      cp "$OUT/check/native434/$s.json" "$OUT/check/pair/" 2>/dev/null || { note "  $s: no native result to compare (run check-native)"; ok=0; continue; }
+      cp "$OUT/check/native/$s.json" "$OUT/check/pair/" 2>/dev/null || { note "  $s: no native result to compare (run check-native)"; ok=0; continue; }
       mkdir -p "$OUT/check/pair-b" && rm -f "$OUT/check/pair-b"/*.json && cp "$OUT/check/browser/$s.json" "$OUT/check/pair-b/"
       if python3 "$W/scripts/compare-checks.py" "$OUT/check/pair" "$OUT/check/pair-b" --label-a native --label-b browser > "$OUT/logs/compare-$s.log"; then
         note "  $s: browser = native ($(node -p 'const r = require(process.argv[1]); r.messages.length + " messages, " + r.elaborationSeconds + " s"' "$OUT/check/browser/$s.json"))"
@@ -373,6 +417,26 @@ lane_bake() {
     fingerprint "$name" 3 > "$OUT/check/browser/.$name.ok"
     [ "${KEEP_RAW:-0}" = 1 ] || rm -f "$OUT/bake-work/$name.snap" "$OUT/bake-work/$name.snap.deps"
   done
+  # The staged snapshots are this plan's, for this runtime, and nothing else: QED64's baker
+  # replaces an entry by name, so an earlier plan's names (a new Lean version renames every entry)
+  # or another runtime's stay in the index until dropped here, and deploy.sh and
+  # publish-prebuilt.sh refuse an index with another runtime's. The index and its per-build copy
+  # are written as the baker writes them.
+  node -e '
+    const fs = require("fs"), path = require("path");
+    const [dir, planFile, runtime] = process.argv.slice(1);
+    const keep = new Set(["init", ...JSON.parse(fs.readFileSync(planFile, "utf8")).entries.map((e) => e.name)]);
+    const file = path.join(dir, "index.json"), index = JSON.parse(fs.readFileSync(file, "utf8"));
+    const kept = index.snapshots.filter((e) => keep.has(e.name) && e.runtime === runtime);
+    if (kept.length !== index.snapshots.length) {
+      for (const e of index.snapshots) if (!kept.includes(e)) console.log(`   dropped ${e.name} (${e.runtime}) from the staged snapshots`);
+      index.snapshots = kept;
+      for (const to of [file, path.join(dir, `index.${runtime}.json`)]) { fs.writeFileSync(`${to}.tmp`, JSON.stringify(index, null, 2)); fs.renameSync(`${to}.tmp`, to); }
+    }
+    const listed = new Set(kept.map((e) => path.basename(e.url)));
+    for (const n of fs.readdirSync(dir))
+      if ((n.endsWith(".snapz") && !listed.has(n)) || (/^index\.wasm64-[0-9a-f]{16}\.json$/.test(n) && n !== `index.${runtime}.json`)) fs.rmSync(path.join(dir, n));
+  ' "$OUT/staging/snapshots" "$plan" "$RUNTIME"
 }
 
 # --------------------------------------------------------------------------------- fetch --

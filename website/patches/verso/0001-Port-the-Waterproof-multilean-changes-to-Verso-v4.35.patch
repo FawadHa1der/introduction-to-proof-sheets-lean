@@ -1,7 +1,7 @@
-From 62281deb307731d382c45f145bae15ebc82af513 Mon Sep 17 00:00:00 2001
+From 4193d17dc1fe82bbf3f9a8d4920a86008dd15a4e Mon Sep 17 00:00:00 2001
 From: fawad haider <153737+FawadHa1der@users.noreply.github.com>
 Date: Thu, 8 Oct 2026 17:21:18 -0400
-Subject: [PATCH] Port the Waterproof multilean changes to Verso v4.34.0
+Subject: [PATCH] Port the Waterproof multilean changes to Verso v4.35.0
 
 Forward-ports pimotte/verso error-option-fix-v4.31.0 (2c181ad, itself
 ejgallego's 89a89ec "add multilean directive" plus follow-ups) onto
@@ -28,6 +28,11 @@ Everything is `meta` where 4.34 requires it; InlineLean meta-imports
 InlineLean.Block for ExplanationPlaceholder's Quote instance. All 216
 modules of the WaterproofGenre closure compile with the toolchain
 release's native compiler (lean-v4.34.0-e1a79c1 native64).
+
+Rebased unchanged onto upstream v4.35.0 (304b856): the 4.34 port
+applies as is, and the whole overlay (Verso, SubVerso, Illuminate,
+WaterproofGenre, Verbose, the course's Customlib) compiles with
+lean-v4.35.0-b081e7c native64.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
@@ -111,7 +116,7 @@ index eb2151a2..ddb0f34e 100644
      overflow-x: auto;
      margin: 0px;
 diff --git a/src/verso-manual/VersoManual/InlineLean.lean b/src/verso-manual/VersoManual/InlineLean.lean
-index a93054b3..0db69c8b 100644
+index df9ef28e..2257ba16 100644
 --- a/src/verso-manual/VersoManual/InlineLean.lean
 +++ b/src/verso-manual/VersoManual/InlineLean.lean
 @@ -19,6 +19,7 @@ public import Verso
@@ -528,10 +533,10 @@ index 2578c5a3..4d34e00b 100644
 +              reportError s!"Missing multilean explanation block {idx}"
 +        pure {{<div class="multilean">{{out}}</div>}}
 diff --git a/src/verso/Verso/Doc/Elab/Basic.lean b/src/verso/Verso/Doc/Elab/Basic.lean
-index 1816f7f7..91261c1a 100644
+index 81c70c3f..b97fb588 100644
 --- a/src/verso/Verso/Doc/Elab/Basic.lean
 +++ b/src/verso/Verso/Doc/Elab/Basic.lean
-@@ -186,3 +186,11 @@ public structure DocListInfo where
+@@ -199,3 +199,11 @@ public structure DocListInfo where
    bullets : Array Syntax
    items : Array Syntax
  deriving Repr, TypeName
@@ -544,10 +549,10 @@ index 1816f7f7..91261c1a 100644
 +  roots : Array Syntax
 +deriving Repr, TypeName
 diff --git a/src/verso/Verso/Doc/Lsp.lean b/src/verso/Verso/Doc/Lsp.lean
-index 42ed13da..a2dad65e 100644
+index 793cbdc6..2960376b 100644
 --- a/src/verso/Verso/Doc/Lsp.lean
 +++ b/src/verso/Verso/Doc/Lsp.lean
-@@ -21,7 +21,7 @@ public meta import Verso.Doc.Name
+@@ -23,7 +23,7 @@ public meta import VersoUtil.InfoTree
  
  namespace Verso.Lsp
  
@@ -556,7 +561,7 @@ index 42ed13da..a2dad65e 100644
  open Verso.Doc (PointOfInterest)
  open Verso.Hover
  open Lean.Doc.Syntax
-@@ -400,6 +400,20 @@ deriving Inhabited, Repr
+@@ -450,6 +450,20 @@ deriving Inhabited, Repr
  protected meta def SemanticTokenEntry.ordLt (a b : SemanticTokenEntry) : Bool :=
    a.line < b.line ∨ (a.line = b.line ∧ a.startChar < b.startChar)
  
@@ -577,7 +582,7 @@ index 42ed13da..a2dad65e 100644
  meta def encodeTokenEntries (entries : Array SemanticTokenEntry) : Array Nat := Id.run do
    let mut data := #[]
    let mut lastLine := 0
-@@ -561,17 +575,68 @@ where
+@@ -611,17 +625,68 @@ where
        }]
      else #[]
  
@@ -652,7 +657,7 @@ index 42ed13da..a2dad65e 100644
  
  open Lean Server Lsp IO in
  partial def getFinishedPrefixWithTimeout' (xs : AsyncList ε α) (timeoutMs : UInt32)
-@@ -659,13 +724,13 @@ meta partial def handleTokens (prev : RequestTask SemanticTokens)
+@@ -691,13 +756,13 @@ meta partial def handleTokens (prev : RequestTask SemanticTokens)
    if let some endPos := endPos? then
      let t := doc.cmdSnaps.waitUntil (·.endPos >= endPos)
      let toks : RequestTask (Array SemanticTokenEntry) :=
@@ -668,7 +673,7 @@ index 42ed13da..a2dad65e 100644
      let response ← mergeIntoPrev (.pure toks)
      pure <| response.mapCheap fun t => t.map ({ response := ·, isComplete := isComplete })
  
-@@ -673,7 +738,7 @@ where
+@@ -705,7 +770,7 @@ where
    mergeIntoPrev (toks : RequestTask (Array SemanticTokenEntry)) :=
      mergeResponses toks prev fun
        | none, none => SemanticTokens.mk none #[]
@@ -677,7 +682,7 @@ index 42ed13da..a2dad65e 100644
        | none, some r => r
        | some mine, some leans => {leans with data := mergeTokens mine leans}
  
-@@ -701,7 +766,7 @@ meta def handleTokensFullStateful
+@@ -733,7 +798,7 @@ meta def handleTokensFullStateful
    let text := doc.meta.text
    let (snaps, _, isComplete) ← doc.cmdSnaps.getFinishedPrefixWithTimeout 2000
    RequestM.checkCancelled
@@ -686,3 +691,6 @@ index 42ed13da..a2dad65e 100644
    RequestM.checkCancelled
    let response := {prev with data := mergeTokens toks prev.response}
    RequestM.checkCancelled
+-- 
+2.54.0 (Apple Git-157)
+

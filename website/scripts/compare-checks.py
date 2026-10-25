@@ -7,7 +7,8 @@ For each sheet in both: the messages (severity, line, column, text) only A has a
 counted as multisets: a message twice in A and once in B is one message only in A. The order
 of messages is not compared (Lean publishes them per command, not in file order). Exit 0 when
 every sheet's messages are identical, 1 otherwise. Used to compare the 4.31
-baseline with the 4.34 port (native), and the browser runtime with native 4.34."""
+baseline with the port (native), one Lean release with the next (native 4.34 with native
+4.35), and the browser runtime with native Lean."""
 import json, os, sys
 from collections import Counter
 args = [x for x in sys.argv[1:] if not x.startswith("--label")]

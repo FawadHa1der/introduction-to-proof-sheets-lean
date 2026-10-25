@@ -47,7 +47,7 @@ export function fingerprints({ out, runtime, qed64, runner, opts = "", entry = n
   return plan.entries.filter((e) => !entry || e.name === entry).map((e) => {
     const sheets = e.sheets.map((id) => {
       const text = fs.readFileSync(path.join(REPO, "Bewijzen", id.replace(".", "/") + ".lean"));
-      const nativeFile = path.join(out, "check/native434", `${id}.json`);
+      const nativeFile = path.join(out, "check/native", `${id}.json`);
       const native = fs.existsSync(nativeFile)
         ? JSON.parse(fs.readFileSync(nativeFile, "utf8")).messages.map((m) => [m.severity, m.line, m.col, m.text.trim()]).sort()
         : null;
